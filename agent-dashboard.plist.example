@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>agent-dashboard</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/node</string>
+    <string>/Users/YOU/.claude/agent-dashboard/server.mjs</string>
+  </array>
+  <!-- Start at login... -->
+  <key>RunAtLoad</key><true/>
+  <!-- ...but never resurrect it. KeepAlive true means you cannot stop it. -->
+  <key>KeepAlive</key><false/>
+  <key>StandardOutPath</key><string>/Users/YOU/.claude/agent-dashboard/dashboard.log</string>
+  <key>StandardErrorPath</key><string>/Users/YOU/.claude/agent-dashboard/dashboard.log</string>
+  <key>WorkingDirectory</key><string>/Users/YOU/.claude/agent-dashboard</string>
+</dict>
+</plist>

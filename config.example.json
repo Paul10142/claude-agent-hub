@@ -1,0 +1,17 @@
+{
+  "_comment": "Copy to config.json and edit. config.json is gitignored — it holds your own paths.",
+  "port": 7823,
+  "lists": [
+    {
+      "project": "My Project",
+      "kind": "action",
+      "path": "~/code/my-project/docs/HUMAN_TODO.md",
+      "_kind": "action = things only a human can do. decision = questions an agent could act on."
+    },
+    {
+      "project": "My Project",
+      "kind": "decision",
+      "path": "~/code/my-project/docs/DECISIONS.md"
+    }
+  ]
+}

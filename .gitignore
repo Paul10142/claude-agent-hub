@@ -1,0 +1,8 @@
+# Your own machine's paths and project names — never published.
+config.json
+dashboard.log
+node_modules/
+.DS_Store
+
+# Internal engineering notes — names projects and incidents. Not published.
+NOTES.md
