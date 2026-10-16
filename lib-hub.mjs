@@ -37,7 +37,9 @@ function projectOf(s) {
  * `at` is when the document is built; Working rows count as active then.
  */
 export function hubRows(sessions, titles, at = Date.now()) {
-  return sessions.map((s) => {
+  // A session archived in the app can still be on the board for a minute,
+  // until its process ends; the page drops it straight away.
+  return sessions.filter((s) => !titles.get(s.id)?.archived).map((s) => {
     const meta = titles.get(s.id) || {};
     const last = Math.max(Number(s.lastSeen) || 0, Number(meta.lastActivityAt) || 0);
     return {
@@ -70,7 +72,13 @@ export function hubFingerprint(rows) {
   return createHash('sha1').update(JSON.stringify(shape)).digest('hex').slice(0, 16);
 }
 
-export function hubDoc({ sessions, titles, todoHubUrl, at = Date.now() }) {
+/**
+ * `actions` turns on the page's Archive button. Leave it off until something
+ * carries the requests out: the page writes actions/archive-<localId> rows
+ * ({kind: "archive", sessionId, title, at, status: "pending"}), and only a
+ * Claude session inside the app can archive another session.
+ */
+export function hubDoc({ sessions, titles, todoHubUrl, actions = false, at = Date.now() }) {
   const rows = hubRows(sessions, titles, at);
   const counts = {};
   for (const r of rows) counts[r.group] = (counts[r.group] || 0) + 1;
@@ -80,6 +88,7 @@ export function hubDoc({ sessions, titles, todoHubUrl, at = Date.now() }) {
     fingerprint: hubFingerprint(rows),
     counts,
     todoHubUrl: todoHubUrl || null,
+    actions: !!actions,
     sessions: rows,
   };
 }

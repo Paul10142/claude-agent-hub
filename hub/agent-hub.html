@@ -61,11 +61,13 @@ summary{cursor:pointer;color:var(--accent);font-weight:500;padding:2px 0;min-hei
 .todos{margin:6px 0 2px;padding-left:20px;display:flex;flex-direction:column;gap:4px;color:var(--fg)}
 code{font-size:13px;background:var(--chip);padding:0 4px;border-radius:4px;overflow-wrap:anywhere}
 .acts{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:2px}
-a.btn{display:inline-flex;align-items:center;box-sizing:border-box;min-height:40px;padding:8px 14px;border-radius:10px;font-weight:600;font-size:14px;text-decoration:none;border:1px solid var(--line);background:var(--surface);color:var(--accent);white-space:nowrap}
-a.btn:hover{background:var(--chip)}
-/* The button for the device in hand is the filled one. */
-a.btn.phone{background:var(--navy);color:var(--bg);border-color:var(--navy)}
+.btn{display:inline-flex;align-items:center;box-sizing:border-box;min-height:40px;padding:8px 14px;border-radius:10px;font:inherit;font-weight:600;font-size:14px;text-decoration:none;border:1px solid var(--line);background:var(--surface);color:var(--accent);white-space:nowrap;cursor:pointer}
+.btn:hover{background:var(--chip)}
+.btn.open{background:var(--navy);color:var(--bg);border-color:var(--navy)}
+.btn.warn{color:var(--needs);border-color:var(--needs)}
+.lnk{font:inherit;font-size:14px;font-weight:600;background:none;border:0;color:var(--accent);cursor:pointer;min-height:40px;padding:0 6px}
 .note{font-size:13px;color:var(--muted)}
+.note.err{color:var(--needs)}
 .more{font:inherit;font-size:14px;font-weight:600;width:100%;background:var(--chip);color:var(--accent);border:0;border-top:1px solid var(--line);padding:10px 14px;min-height:44px;cursor:pointer;text-align:left}
 .empty{color:var(--muted);font-size:14px;padding:12px 14px}
 .panel{border:1px solid var(--line);border-radius:12px;background:var(--surface);padding:14px 16px;display:flex;flex-direction:column;gap:8px}
@@ -77,8 +79,6 @@ button:focus-visible,a:focus-visible,summary:focus-visible{outline:2px solid var
   .wrap{max-width:1280px}
   #jump{display:none}
   .board{display:grid;grid-template-columns:repeat(var(--cols,4),minmax(0,1fr));gap:14px;align-items:start}
-  a.btn.phone{background:var(--surface);color:var(--accent);border-color:var(--line)}
-  a.btn.mac{background:var(--navy);color:var(--bg);border-color:var(--navy)}
 }
 @media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
 </style>
@@ -95,14 +95,15 @@ button:focus-visible,a:focus-visible,summary:focus-visible{outline:2px solid var
 
 <footer>
   <p>A copy of the board on your Mac. It shows each Claude session from the last 24 hours that isn't archived, in the same columns.</p>
-  <p>“Open on Phone” opens the session's chat on claude.ai, on any device, for sessions with Remote Control on. “Open on Mac” opens the same chat in the Claude app on your Mac.</p>
+  <p>“Open in Claude” opens the session's chat in the Claude app on your Mac. On a phone it opens the chat on claude.ai instead, for sessions with Remote Control on.</p>
   <p>Sessions run on your Mac, so while it sleeps they pause, the chats can't take new messages, and this page keeps its last copy.</p>
 </footer>
 </div>
 
 <script>
 // The Mac writes the whole board into one database document, board/current (see lib-hub.mjs in the dashboard).
-// This page only reads it. Actions for later (archive, reply) would go in an "actions" collection the Mac side carries out.
+// Archive writes actions/archive-<localId>; a Claude session in the app carries it out and deletes the row, or marks
+// it failed with a reason. The board says whether that is set up ("actions": true); until then there is no button.
 const COLS=[
   {key:"needsInput",label:"Needs Input",why:"It asked you something, or left you to-dos."},
   {key:"ready",label:"Ready for You",why:"Finished. Nothing happens until you look."},
@@ -112,8 +113,12 @@ const COLS=[
 ];
 const SHOW=5;           // rows a column shows before "Show All"
 const STALE_MIN=60;     // older than this, the freshness line turns amber
-let board=null, phase="loading";
-const expanded={}, openK={};
+let board=null, phase="loading", db=null;
+const expanded={}, openK={}, confirming={};
+let actions=new Map(), actionMsg={};   // localId -> its action row; localId -> a write that failed
+// Paul is on the Mac almost always: Open goes to the Claude app there. A phone can't open the app link, so it gets
+// the session's chat on claude.ai (Remote Control) when there is one.
+const onPhone=/iPhone|iPad|iPod|Android/i.test(navigator.userAgent||"");
 let hideRoutines=true, showCompleted=false;
 try{hideRoutines=localStorage.getItem("hub.hideRoutines")!=="0";showCompleted=localStorage.getItem("hub.showCompleted")==="1"}catch(e){}
 const remember=(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}};
@@ -155,15 +160,40 @@ function itemHtml(s){
   const tags=(s.blocked?`<span class="tag perm">Permission</span>`:"")+(s.routine?`<span class="tag">Routine</span>`:"");
   const n=s.todos?.length||0;
   const todos=n?`<details data-k="t-${id}"${openK["t-"+s.id]?" open":""}><summary>${n===1?"Your To-Do":`Your To-Dos (${n})`}</summary><ul class="todos">${s.todos.map(x=>`<li>${inl(x)}</li>`).join("")}</ul></details>`:"";
-  const phone=okBridge(s.bridge)?`<a class="btn phone" href="https://claude.ai/code/${esc(s.bridge)}" target="_blank" rel="noopener">Open on Phone ↗</a>`:"";
-  const mac=okLocal(s.localId)?`<a class="btn mac" href="claude://claude.ai/epitaxy/${esc(s.localId)}" target="_blank" rel="noopener">Open on Mac</a>`:"";
-  const note=!phone&&mac?`<span class="note">Remote Control is off, so this one opens on the Mac only.</span>`:"";
+  const web=okBridge(s.bridge)?`https://claude.ai/code/${s.bridge}`:"";
+  const app=okLocal(s.localId)?`claude://claude.ai/epitaxy/${s.localId}`:"";
+  const href=onPhone?(web||app):(app||web);
+  const open=href?`<a class="btn open" href="${esc(href)}" target="_blank" rel="noopener">Open in Claude</a>`:"";
+  const acts=open+archiveHtml(s);
   return `<article class="item k-${esc(s.group)}">
     <div class="r1"><span class="t">${esc(s.title)}${tags}</span><span class="ago" data-at="${Number(s.lastActiveAt)||""}">${s.lastActiveAt?"Active "+ago(Date.now()-s.lastActiveAt):""}</span></div>
     ${sub.text?`<p class="sub${sub.q?" q":""}">${esc(sub.text)}</p>`:""}
     ${todos}
-    ${phone||mac?`<div class="acts">${phone}${mac}${note}</div>`:""}
+    ${acts?`<div class="acts">${acts}</div>`:""}
   </article>`;
+}
+
+// Archive: confirm in the page (the viewer shows no dialogs), then leave a request for the session that refreshes the board.
+function archiveHtml(s){
+  if(!board?.actions||!db||!okLocal(s.localId))return "";
+  const id=esc(s.localId),a=actions.get(s.localId),err=actionMsg[s.localId];
+  if(a&&a.status==="pending")return `<span class="note">Archive requested. It happens at the next refresh.</span><button type="button" class="lnk" data-undo="${id}">Undo</button>`;
+  if(confirming[s.localId])return `<span class="note">Archive this session? You can unarchive it in the app.</span><button type="button" class="btn warn" data-archive-yes="${id}">Archive</button><button type="button" class="lnk" data-archive-no="${id}">Cancel</button>`;
+  const why=err?`<span class="note err">${esc(err)}</span>`:a&&a.status==="failed"?`<span class="note err">Couldn't archive it: ${esc(a.result||"no reason given")}.</span>`:"";
+  return `<button type="button" class="btn" data-archive="${id}">Archive</button>${why}`;
+}
+async function requestArchive(localId){
+  const s=(board?.sessions||[]).find(x=>x.localId===localId);
+  try{
+    await db.collection("actions").doc("archive-"+localId).set({kind:"archive",sessionId:localId,title:s?.title||"",at:new Date().toISOString(),status:"pending"});
+    delete actionMsg[localId];
+  }catch(e){actionMsg[localId]=e?.code==="invalid_argument"?"You can view this page but not change it.":"That didn't save. Check your connection and try again."}
+  delete confirming[localId];render();
+}
+async function undoArchive(localId){
+  try{await db.collection("actions").doc("archive-"+localId).delete();delete actionMsg[localId]}
+  catch(e){actionMsg[localId]="Couldn't undo. Check your connection and try again."}
+  render();
 }
 
 function freshness(){
@@ -224,17 +254,25 @@ document.addEventListener("click",e=>{
   if(btn.id==="routines"){hideRoutines=!hideRoutines;remember("hub.hideRoutines",hideRoutines?"1":"0");render();return}
   if(btn.id==="completed"){showCompleted=!showCompleted;remember("hub.showCompleted",showCompleted?"1":"0");render();return}
   if(btn.dataset.more){expanded[btn.dataset.more]=!expanded[btn.dataset.more];render();return}
+  if(btn.dataset.archive){confirming[btn.dataset.archive]=true;render();return}
+  if(btn.dataset.archiveNo){delete confirming[btn.dataset.archiveNo];render();return}
+  if(btn.dataset.archiveYes){btn.disabled=true;requestArchive(btn.dataset.archiveYes);return}
+  if(btn.dataset.undo){btn.disabled=true;undoArchive(btn.dataset.undo);return}
   if(btn.dataset.jump){const sec=$("col-"+btn.dataset.jump);if(sec){const calm=matchMedia("(prefers-reduced-motion: reduce)").matches;sec.scrollIntoView({behavior:calm?"auto":"smooth",block:"start"})}}
 });
 
 render();
 (async()=>{
-  const db=await window.claude?.use?.("db");
+  db=await window.claude?.use?.("db");
   if(!db){phase="nodb";render();return}
   db.doc("board/current").onSnapshot(snap=>{
     const d=snap.exists?snap.data():null;
     board=d&&Array.isArray(d.sessions)&&d.refreshedAt?d:null;
     phase=board?"ok":"empty";render();
   },()=>{phase="nodb";render()});
+  db.collection("actions").onSnapshot(qs=>{
+    actions=new Map(qs.docs.map(d=>d.data()).filter(x=>x&&x.kind==="archive"&&okLocal(x.sessionId)).map(x=>[x.sessionId,x]));
+    render();
+  },()=>{});
 })();
 </script>

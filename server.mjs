@@ -38,6 +38,13 @@ function hubUrl() {
 }
 const HUB_URL = hubUrl();
 
+// The Agent Hub page's Archive button (lib-hub.mjs). Off unless config.json
+// sets "agentHubActions": true, which means a session is carrying them out.
+const HUB_ACTIONS = (() => {
+  try { return JSON.parse(readFileSync(path.join(HERE, 'config.json'), 'utf8')).agentHubActions === true; }
+  catch { return false; }
+})();
+
 /** session_id -> record */
 const sessions = new Map();
 /** cliSessionId -> {title, localId, branch} from the desktop app's own store */
@@ -384,7 +391,7 @@ const server = http.createServer(async (req, res) => {
   // the fingerprint and the counts, so the session that copies it into the
   // page's database reads a few lines, not the whole board, on every refresh.
   if (url.pathname === '/api/hub') {
-    const doc = hubDoc({ sessions: snapshot().sessions, titles: titleCache, todoHubUrl: HUB_URL });
+    const doc = hubDoc({ sessions: snapshot().sessions, titles: titleCache, todoHubUrl: HUB_URL, actions: HUB_ACTIONS });
     const out = url.searchParams.get('save') === '1'
       ? { file: await saveHubDoc(path.join(HERE, 'state'), doc),
           fingerprint: doc.fingerprint, refreshedAt: doc.refreshedAt, counts: doc.counts }
