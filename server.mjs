@@ -104,15 +104,21 @@ function sweep() {
 //                 scheduled check-in, or a session it started that is still going.
 //   ready       — the turn is over and nothing will happen until Paul looks:
 //                 a finished report to read, a decision, or a stalled agent.
+//   completed   — the reply ends with the archive sentence: the agent says all
+//                 is saved and the next step lives elsewhere (the hub, Notion).
+//                 All that is left is archiving. The page hides this column
+//                 until Paul clicks "Show Completed" (asked for 2026-10-16:
+//                 "things I haven't been able to archive yet").
 //
 // History: an earlier rule left every ended turn under Working, so an agent
 // waiting on CI would not send Paul to a window with nothing to ask. Background
 // is now that bucket, said out loud, and everything else is honestly his move.
 //
 // Two overrides, both the agent's or the app's own words:
-//   - the reply ends with the archive sentence: done, so ready, whatever is left
-//     in the background (a forgotten dev server must not hold it there);
-//   - the app's own turn summary names something Paul must do (needsAction):
+//   - the reply ends with the archive sentence: completed, whatever is left in
+//     the background (a forgotten dev server must not hold it there), and even
+//     if the app's summary names a decision, because that decision is on the hub;
+//   - otherwise, the app's own turn summary names something Paul must do (needsAction):
 //     ready, even with CI still running, because he has a decision to make.
 //
 // Anything left running counts only while the transcript has moved in the last
@@ -142,7 +148,7 @@ function classify(state, t, meta) {
   if (state === 'Waiting') return { group: 'needsInput' };
   if (state === 'Working') return { group: 'working' };
   // Idle, or Ended: the turn is over either way.
-  if (t?.archivable) return { group: 'ready' };
+  if (t?.archivable) return { group: 'completed' };
   if (meta?.needsAction) return { group: 'ready' };
   const why = backgroundReason(t, meta);
   return why ? { group: 'background', why } : { group: 'ready' };
@@ -219,7 +225,7 @@ function snapshot() {
     r.group = 'background';
     r.why = k === 1 ? 'A session it started' : `${k} sessions it started`;
   }
-  const rank = { needsInput: 0, ready: 1, working: 2, background: 3 };
+  const rank = { needsInput: 0, ready: 1, working: 2, background: 3, completed: 4 };
   list.sort(
     (a, b) =>
       (rank[a.group] ?? 9) - (rank[b.group] ?? 9) ||

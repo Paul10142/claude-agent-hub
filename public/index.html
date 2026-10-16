@@ -60,6 +60,7 @@
   /* Four columns across the top half; the selected agent fills the bottom half. */
   .board{display:flex;flex-direction:column;gap:18px}
   .cols{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;align-items:start}
+  .cols.five{grid-template-columns:repeat(5,minmax(0,1fr))}
 
   .group{border:1px solid var(--line);border-radius:12px;background:var(--surface);overflow:hidden}
   .gh{padding:10px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px;
@@ -68,6 +69,7 @@
   .group.needs .gh .t{color:var(--warn)}
   .group.ready .gh .t{color:var(--done)}
   .group.bg .gh .t{color:var(--muted)}
+  .group.done .gh .t{color:var(--muted)}
   .group{min-width:0}
   /* Five rows, then the column scrolls on its own. renderList measures the cap. */
   .rows{overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--line) transparent}
@@ -96,6 +98,8 @@
   .sd{width:8px;height:8px;border-radius:50%;flex:none;background:var(--accent)}
   .row.needs .sd{background:var(--warn)}
   .row.bg .sd{background:var(--faint)}
+  .row.done .sd{background:var(--done);opacity:.55}
+  .row.done .name{color:var(--muted)}
   .row.stale .sd{background:transparent;border:1.5px solid var(--faint)}
   .row.ready .sd{background:var(--done)}
   .row.ready.stale .sd{background:transparent;border-color:var(--done)}
@@ -172,9 +176,9 @@
   .acts b{color:var(--fg);font-weight:600}
 
   /* ---------------------------------------------------------------- phone */
-  @media (max-width:1100px){ .cols{grid-template-columns:repeat(2,minmax(0,1fr))} }
+  @media (max-width:1100px){ .cols,.cols.five{grid-template-columns:repeat(2,minmax(0,1fr))} }
   @media (max-width:820px){
-    .cols{grid-template-columns:minmax(0,1fr)}
+    .cols,.cols.five{grid-template-columns:minmax(0,1fr)}
     .detail{padding:16px;min-height:0}
     .actions{margin-left:0;width:100%}
   }
@@ -193,6 +197,7 @@
     <span class="live"><span class="dot" id="dot"></span><span id="livetext">live</span></span>
     <div class="actions">
       <button class="tog" id="routines" type="button" aria-pressed="false">Hide Routines</button>
+      <button class="tog" id="completed" type="button" aria-pressed="false">Show Completed</button>
       <a class="hub" href="#" target="_blank" rel="noopener">To-Do Hub ↗</a>
       <span class="counts" id="count"></span>
     </div>
@@ -220,6 +225,10 @@ const expanded = new Set(), scrolls = {};
 // asks for them. Remembered per browser; a blocked storage just means the default.
 let hideRoutines = true;
 try { hideRoutines = localStorage.getItem('agents.hideRoutines') !== '0'; } catch {}
+// Completed (the agent ended with the archive sentence; only archiving is left)
+// is a fifth column, hidden until asked for. Remembered the same way.
+let showCompleted = false;
+try { showCompleted = localStorage.getItem('agents.showCompleted') === '1'; } catch {}
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c =>
   ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -293,9 +302,11 @@ const SECTIONS = [
   { key:'working',    label:'Working',       cls:'',      pill:''   },
   // Turn over, but something it started will wake it again: CI, a run, a side session.
   { key:'background', label:'Background',    cls:'bg',    pill:'m'  },
+  // Ended with "Everything has been saved. You can archive this thread." Only shown on request.
+  { key:'completed',  label:'Completed',     cls:'done',  pill:'m'  },
 ];
 const LABEL = Object.fromEntries(SECTIONS.map(x => [x.key, x.label]));
-const ROWCLS = { needsInput:'needs', ready:'ready', working:'', background:'bg' };
+const ROWCLS = { needsInput:'needs', ready:'ready', working:'', background:'bg', completed:'done' };
 const SHOW = 5;   // rows a column shows before it scrolls
 
 // A routine that has asked for permission still shows: it is stuck until you answer.
@@ -335,11 +346,17 @@ function renderList(){
   rb.hidden = !routines;
   rb.textContent = hideRoutines ? `Show Routines (${routines})` : 'Hide Routines';
   rb.setAttribute('aria-pressed', String(!hideRoutines));
+  const done = n('completed');
+  const cb = $('completed');
+  cb.textContent = showCompleted ? 'Hide Completed' : `Show Completed (${done})`;
+  cb.setAttribute('aria-pressed', String(showCompleted));
 
   // This runs every second, so keep each column where it was scrolled to.
   document.querySelectorAll('#cols .rows').forEach(r => { scrolls[r.dataset.key] = r.scrollTop; });
 
-  $('cols').innerHTML = SECTIONS.map(sec => {
+  const shown = SECTIONS.filter(sec => sec.key !== 'completed' || showCompleted);
+  $('cols').classList.toggle('five', shown.length === 5);
+  $('cols').innerHTML = shown.map(sec => {
     const rows = list.filter(s => s.group === sec.key);
     const open = expanded.has(sec.key);
     const body = rows.length ? rows.map(s => rowHtml(s, t)).join('') : '<div class="none">Nothing here</div>';
@@ -372,6 +389,11 @@ function renderList(){
 $('routines').addEventListener('click', () => {
   hideRoutines = !hideRoutines;
   try { localStorage.setItem('agents.hideRoutines', hideRoutines ? '1' : '0'); } catch {}
+  renderList();
+});
+$('completed').addEventListener('click', () => {
+  showCompleted = !showCompleted;
+  try { localStorage.setItem('agents.showCompleted', showCompleted ? '1' : '0'); } catch {}
   renderList();
 });
 

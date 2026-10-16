@@ -102,10 +102,11 @@ How the Agents tab groups sessions, in four columns across the top:
 | **Ready for You** | The turn is over and nothing it started will wake it up again: a report to read, a decision, or a stalled agent. |
 | **Working** | Mid-turn. |
 | **Background** | The turn is over, but something it started will wake it: a background command, helper agent or monitor still running, an open PR whose CI the app is watching, a scheduled check-in, or a session it started. The row says which. |
+| **Completed** | Hidden until you click "Show Completed". The agent's last reply ends with `Everything has been saved. You can archive this thread.`, so all that's left is archiving it. |
 
 Each column shows five agents and scrolls; "Show All" expands it. Click one and its detail fills the bottom half of the page, with an **Open in Claude** button that brings that session forward in the app. Routines (sessions started by a scheduled task) are hidden until you click "Show Routines".
 
-A reply that ends with `Everything has been saved. You can archive this thread.` always counts as Ready for You. That's the closing line this setup's `CLAUDE.md` requires; change `isArchivable()` in `lib-sessions.mjs` to match yours.
+A reply that ends with `Everything has been saved. You can archive this thread.` always counts as Completed. That's the closing line this setup's `CLAUDE.md` requires; change `isArchivable()` in `lib-sessions.mjs` to match yours.
 
 Ticking items builds a copy-pasteable hand-off note — the page can't edit your files, so it writes the message for an agent to do it.
 
