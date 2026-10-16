@@ -110,6 +110,19 @@ The closing line and the "TO-DO ITEMS" heading are the reply format this setup's
 
 Ticking items builds a copy-pasteable hand-off note — the page can't edit your files, so it writes the message for an agent to do it.
 
+## Agent Hub: the board on your phone
+
+`hub/agent-hub.html` is a claude.ai Artifact page that shows the same columns as the Agents tab, so you can check your sessions from claude.ai on any device. Each card has **Open on Phone** (`https://claude.ai/code/<id>`, for sessions with Remote Control on) and **Open on Mac** (`claude://claude.ai/epitaxy/<id>`).
+
+The page reads one document, `board/current`, from its Artifact database. Nothing outside the Claude app can write that database: only the app's own Claude sessions get the `ArtifactData` tool, so a plain `claude -p` run from this server cannot do it. A refresh is therefore two steps run by a session inside the app:
+
+1. `curl -s 'http://127.0.0.1:7823/api/hub?save=1'` writes the board to `state/hub-board.json` and answers with that path, a `fingerprint` and the counts. The fingerprint ignores the clocks, so an unchanged fingerprint means the page would show the same thing.
+2. `ArtifactData` `set` on collection `board`, doc `current`, with `file_path` set to that file and `if_version` set to the version the last write returned.
+
+`GET /api/hub` (without `save`) returns the whole document for debugging. The document holds titles, columns, to-dos and links, never transcripts. Publish the page with `capabilities: {db: {}}`.
+
+Actions from the page (archive, mark seen, reply) are not built. When they are, the page writes rows to an `actions` collection and the session that refreshes the board carries them out, since only an app session can archive or message another session.
+
 ## Deliberate limitations
 
 - **It cannot send messages to an agent.** Claude Code opens no local port and each session is an isolated process, so a local page has no way in. Better to say so than ship a text box that silently does nothing.

@@ -55,6 +55,9 @@ export async function sessionIndex() {
         watchedPrs: (d.prs || []).filter(p => p.state === 'OPEN' && p.autoFix).map(p => p.prNumber),
         // The session that started this one; it gets woken when this one finishes.
         parentLocalId: d.spawnedFrom?.sessionId || null,
+        // Remote Control's session on claude.ai, newest last; claude.ai/code/<id>
+        // opens it on the phone. Absent when Remote Control is off.
+        bridgeId: Array.isArray(d.bridgeSessionIds) ? d.bridgeSessionIds.at(-1) || null : null,
       });
     } catch { /* a half-written file is not an error worth surfacing */ }
   }));

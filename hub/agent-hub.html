@@ -1,0 +1,239 @@
+<title>Agent Hub</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+<style>
+/* Layout: the To-Do Hub's phone-first column, so the two pages read as a pair. The board's columns stack in its own order
+   (Needs Input first) with jump buttons on top; from 1000px wide they sit side by side like the board on the Mac. */
+:root{
+  --bg:#f6f8fc; --surface:#ffffff; --fg:#0b1a33; --muted:#51607a; --line:#bfdbfe;
+  --accent:#1d4ed8; --navy:#172554; --chip:#eff6ff;
+  --needs:#b45309; --needs-bg:#fff7ed; --ready:#15803d; --ready-bg:#f0fdf4; --quiet:#64748b;
+  --sans:"Inter",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#0a1122; --surface:#111a2e; --fg:#e6ecf7; --muted:#9aa8c2; --line:#1e3a8a;
+  --accent:#7aa2ff; --navy:#c7d6ff; --chip:#162240;
+  --needs:#fbbf24; --needs-bg:#2a1f0a; --ready:#4ade80; --ready-bg:#0c2618; --quiet:#94a3b8; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0a1122; --surface:#111a2e; --fg:#e6ecf7; --muted:#9aa8c2; --line:#1e3a8a;
+  --accent:#7aa2ff; --navy:#c7d6ff; --chip:#162240;
+  --needs:#fbbf24; --needs-bg:#2a1f0a; --ready:#4ade80; --ready-bg:#0c2618; --quiet:#94a3b8; color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font:15px/1.5 var(--sans);padding-block:24px 60px;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.wrap{max-width:740px;margin:0 auto;display:flex;flex-direction:column;gap:24px}
+h1{font-size:26px;line-height:1.2;margin:0;color:var(--navy);text-wrap:balance}
+h2{font-size:19px;margin:0;color:var(--navy);text-wrap:balance}
+header{display:flex;flex-direction:column;gap:14px}
+a{color:var(--accent);overflow-wrap:anywhere}
+.hrow{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+.hlinks{display:flex;gap:8px;flex-wrap:wrap}
+a.hub{border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:6px 12px;text-decoration:none;font-weight:600;font-size:14px;white-space:nowrap;min-height:36px;box-sizing:border-box;display:inline-flex;align-items:center}
+.fresh{margin:0;font-size:14px;color:var(--muted);display:flex;gap:8px;align-items:baseline}
+.fresh .dot{width:9px;height:9px;border-radius:50%;background:var(--quiet);flex:none;transform:translateY(-1px)}
+.fresh.ok .dot{background:var(--ready)}
+.fresh.old{color:var(--needs)} .fresh.old .dot{background:var(--needs)}
+.fresh b{color:var(--fg);font-weight:600}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{display:inline-flex;align-items:center;gap:6px;box-sizing:border-box;font:inherit;font-size:14px;font-weight:600;border:1px solid var(--line);background:var(--surface);color:var(--fg);border-radius:999px;padding:6px 14px;min-height:36px;cursor:pointer}
+.chip .n{font-variant-numeric:tabular-nums;opacity:.75}
+.chip.k-needsInput .n{color:var(--needs);opacity:1}
+.chip[aria-pressed="true"]{background:var(--navy);color:var(--bg);border-color:var(--navy)}
+.board{display:flex;flex-direction:column;gap:24px}
+.col{display:flex;flex-direction:column;gap:10px;min-width:0;scroll-margin-top:12px}
+.sechead{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 12px}
+.meta{font-size:12px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);font-variant-numeric:tabular-nums}
+.why{color:var(--muted);margin:0;font-size:14px}
+.group{border:1px solid var(--line);border-radius:12px;background:var(--surface);overflow:hidden}
+.item{padding:12px 14px;border-bottom:1px solid var(--line);display:flex;flex-direction:column;gap:6px;min-width:0}
+.item:last-child{border-bottom:0}
+/* Column state as a stripe on the row's edge: amber asks for you, green is finished. */
+.item.k-needsInput{box-shadow:inset 3px 0 0 var(--needs)}
+.item.k-ready{box-shadow:inset 3px 0 0 var(--ready)}
+.r1{display:flex;justify-content:space-between;align-items:baseline;gap:4px 12px;flex-wrap:wrap}
+.t{font-weight:600;overflow-wrap:anywhere;min-width:0}
+.ago{font-size:13px;color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums}
+.tag{display:inline-block;font-size:12px;font-weight:600;padding:1px 8px;border-radius:999px;background:var(--chip);color:var(--muted);margin-left:6px;white-space:nowrap;vertical-align:1px}
+.tag.perm{background:var(--needs-bg);color:var(--needs)}
+.sub{margin:0;font-size:14px;color:var(--fg);overflow-wrap:anywhere}
+.sub.q{color:var(--muted)}
+details{font-size:14px;color:var(--muted)}
+summary{cursor:pointer;color:var(--accent);font-weight:500;padding:2px 0;min-height:24px}
+.todos{margin:6px 0 2px;padding-left:20px;display:flex;flex-direction:column;gap:4px;color:var(--fg)}
+code{font-size:13px;background:var(--chip);padding:0 4px;border-radius:4px;overflow-wrap:anywhere}
+.acts{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:2px}
+a.btn{display:inline-flex;align-items:center;box-sizing:border-box;min-height:40px;padding:8px 14px;border-radius:10px;font-weight:600;font-size:14px;text-decoration:none;border:1px solid var(--line);background:var(--surface);color:var(--accent);white-space:nowrap}
+a.btn:hover{background:var(--chip)}
+/* The button for the device in hand is the filled one. */
+a.btn.phone{background:var(--navy);color:var(--bg);border-color:var(--navy)}
+.note{font-size:13px;color:var(--muted)}
+.more{font:inherit;font-size:14px;font-weight:600;width:100%;background:var(--chip);color:var(--accent);border:0;border-top:1px solid var(--line);padding:10px 14px;min-height:44px;cursor:pointer;text-align:left}
+.empty{color:var(--muted);font-size:14px;padding:12px 14px}
+.panel{border:1px solid var(--line);border-radius:12px;background:var(--surface);padding:14px 16px;display:flex;flex-direction:column;gap:8px}
+.panel p{margin:0}
+footer{font-size:13px;color:var(--muted);display:flex;flex-direction:column;gap:6px}
+footer p{margin:0}
+button:focus-visible,a:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+@media (min-width:1000px){
+  .wrap{max-width:1280px}
+  #jump{display:none}
+  .board{display:grid;grid-template-columns:repeat(var(--cols,4),minmax(0,1fr));gap:14px;align-items:start}
+  a.btn.phone{background:var(--surface);color:var(--accent);border-color:var(--line)}
+  a.btn.mac{background:var(--navy);color:var(--bg);border-color:var(--navy)}
+}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+</style>
+
+<div class="wrap">
+<header>
+  <div class="hrow"><h1>Agent Hub</h1><div class="hlinks"><a class="hub" id="todohub" href="#" target="_blank" rel="noopener" hidden>To-Do Hub ↗</a><a class="hub" href="http://127.0.0.1:7823" target="_blank" rel="noopener" title="The live board runs on your Mac only">Mac Board ↗</a></div></div>
+  <p class="fresh" id="fresh" role="status"><span class="dot"></span><span id="freshtext">Loading the board…</span></p>
+  <nav class="chips" id="jump" aria-label="Jump to a column"></nav>
+  <div class="chips" id="toggles"><button type="button" class="chip" id="routines" aria-pressed="false" hidden></button><button type="button" class="chip" id="completed" aria-pressed="false" hidden></button></div>
+</header>
+
+<main class="board" id="board"><div class="panel"><p>Loading the board…</p></div></main>
+
+<footer>
+  <p>A copy of the board on your Mac. It shows each Claude session from the last 24 hours that isn't archived, in the same columns.</p>
+  <p>“Open on Phone” works for sessions with Remote Control on. “Open on Mac” brings the session forward in the Claude app on your Mac.</p>
+</footer>
+</div>
+
+<script>
+// The Mac writes the whole board into one database document, board/current (see lib-hub.mjs in the dashboard).
+// This page only reads it. Actions for later (archive, reply) would go in an "actions" collection the Mac side carries out.
+const COLS=[
+  {key:"needsInput",label:"Needs Input",why:"It asked you something, or left you to-dos."},
+  {key:"ready",label:"Ready for You",why:"Finished. Nothing happens until you look."},
+  {key:"working",label:"Working",why:"In the middle of a turn."},
+  {key:"background",label:"Background",why:"Done for now. Something it started will wake it."},
+  {key:"completed",label:"Completed",why:"It said it can be archived over an hour ago."}
+];
+const SHOW=5;           // rows a column shows before "Show All"
+const STALE_MIN=60;     // older than this, the freshness line turns amber
+let board=null, phase="loading";
+const expanded={}, openK={};
+let hideRoutines=true, showCompleted=false;
+try{hideRoutines=localStorage.getItem("hub.hideRoutines")!=="0";showCompleted=localStorage.getItem("hub.showCompleted")==="1"}catch(e){}
+const remember=(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}};
+
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+// To-dos are markdown from the agent's reply: escape first, then allow code, bold and https links only.
+const inl=s=>esc(s).replace(/`([^`]+)`/g,"<code>$1</code>").replace(/\*\*([^*]+)\*\*/g,"<b>$1</b>")
+  .replace(/\[([^\]]+)\]\((https:\/\/[^\s)]+)\)/g,(m,t,u)=>`<a href="${u}" target="_blank" rel="noopener">${t}</a>`);
+const plain=s=>String(s??"").replace(/\[([^\]]+)\]\([^)]*\)/g,"$1").replace(/[*_`]/g,"");
+const okBridge=b=>/^session_[A-Za-z0-9]+$/.test(String(b||""));
+const okLocal=l=>/^local_[0-9a-f-]+$/i.test(String(l||""));
+
+function ago(ms){
+  if(ms==null||!isFinite(ms))return "";
+  const m=Math.max(0,Math.round(ms/60000));
+  if(m<1)return "just now";
+  if(m<60)return `${m} min ago`;
+  const h=Math.floor(m/60);
+  if(h<24)return `${h} h${m%60?` ${m%60} min`:""} ago`;
+  const d=Math.floor(h/24);return `${d} day${d>1?"s":""} ago`;
+}
+const clock=t=>new Date(t).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"});
+
+// The line under a title: what you need to do, why it is waiting, or what it did. Same order as the Mac board.
+function subOf(s){
+  const n=s.todos?.length||0;
+  if(n)return {text:"→ "+plain(s.todos[0])+(n>1?` (+${n-1} more)`:""),q:false};
+  if(s.blocked)return {text:"Waiting on your answer to a permission prompt or a question.",q:false};
+  if(s.group==="needsInput"&&s.needsAction)return {text:"→ "+plain(s.needsAction),q:false};
+  if(s.group==="background"&&s.why)return {text:"Waiting on: "+s.why,q:true};
+  const t=s.statusDetail||s.asked||"";
+  return {text:t,q:true};
+}
+const visible=()=>(board?.sessions||[]).filter(s=>!hideRoutines||!s.routine||s.blocked);
+
+function itemHtml(s){
+  const sub=subOf(s),id=esc(s.id);
+  const tags=(s.blocked?`<span class="tag perm">Permission</span>`:"")+(s.routine?`<span class="tag">Routine</span>`:"");
+  const n=s.todos?.length||0;
+  const todos=n?`<details data-k="t-${id}"${openK["t-"+s.id]?" open":""}><summary>${n===1?"Your To-Do":`Your To-Dos (${n})`}</summary><ul class="todos">${s.todos.map(x=>`<li>${inl(x)}</li>`).join("")}</ul></details>`:"";
+  const phone=okBridge(s.bridge)?`<a class="btn phone" href="https://claude.ai/code/${esc(s.bridge)}" target="_blank" rel="noopener">Open on Phone ↗</a>`:"";
+  const mac=okLocal(s.localId)?`<a class="btn mac" href="claude://claude.ai/epitaxy/${esc(s.localId)}" target="_blank" rel="noopener">Open on Mac</a>`:"";
+  const note=!phone&&mac?`<span class="note">Remote Control is off, so this one opens on the Mac only.</span>`:"";
+  return `<article class="item k-${esc(s.group)}">
+    <div class="r1"><span class="t">${esc(s.title)}${tags}</span><span class="ago" data-at="${Number(s.lastActiveAt)||""}">${s.lastActiveAt?"Active "+ago(Date.now()-s.lastActiveAt):""}</span></div>
+    ${sub.text?`<p class="sub${sub.q?" q":""}">${esc(sub.text)}</p>`:""}
+    ${todos}
+    ${phone||mac?`<div class="acts">${phone}${mac}${note}</div>`:""}
+  </article>`;
+}
+
+function freshness(){
+  const el=$("fresh"),tx=$("freshtext");
+  if(phase!=="ok"){
+    el.className="fresh";
+    tx.textContent=phase==="loading"?"Loading the board…":phase==="empty"?"No board from your Mac yet.":"The board can't be read in this view.";
+    return;
+  }
+  const at=Date.parse(board.refreshedAt),age=Date.now()-at;
+  if(age<15*60000){el.className="fresh ok";tx.innerHTML=`Updated <b>${esc(ago(age))}</b> (${esc(clock(at))}) from your Mac.`}
+  else if(age<STALE_MIN*60000){el.className="fresh";tx.innerHTML=`Updated <b>${esc(ago(age))}</b> (${esc(clock(at))}) from your Mac.`}
+  else{el.className="fresh old";tx.innerHTML=`Last update from your Mac was <b>${esc(ago(age))}</b> (${esc(clock(at))}). Sessions may have moved since.`}
+}
+
+function render(){
+  freshness();
+  const link=$("todohub"),u=String(board?.todoHubUrl||"");
+  if(/^https:\/\/claude\.ai\//.test(u)){link.href=u;link.hidden=false}else link.hidden=true;
+  const all=board?.sessions||[];
+  const routines=all.filter(s=>s.routine).length;
+  const rb=$("routines");rb.hidden=!routines;rb.textContent=hideRoutines?`Show Routines (${routines})`:"Hide Routines";rb.setAttribute("aria-pressed",String(!hideRoutines));
+  const rows=visible();
+  const nDone=rows.filter(s=>s.group==="completed").length;
+  const cb=$("completed");cb.hidden=phase!=="ok";cb.textContent=showCompleted?"Hide Completed":`Show Completed (${nDone})`;cb.setAttribute("aria-pressed",String(showCompleted));
+  const b=$("board");
+  if(phase!=="ok"){
+    $("jump").innerHTML="";
+    b.innerHTML=phase==="loading"?`<div class="panel"><p>Loading the board…</p></div>`
+      :phase==="empty"?`<div class="panel"><p><b>Nothing here yet.</b> The board appears once your Mac sends its first update.</p><p class="why">Until then, the live board is on your Mac at 127.0.0.1:7823.</p></div>`
+      :`<div class="panel"><p><b>This view can't read the board.</b> Open the page from your Claude sidebar while signed in.</p></div>`;
+    return;
+  }
+  const cols=COLS.filter(c=>c.key!=="completed"||showCompleted);
+  b.style.setProperty("--cols",cols.length);
+  $("jump").innerHTML=cols.map(c=>{const n=rows.filter(s=>s.group===c.key).length;return `<button type="button" class="chip k-${c.key}" data-jump="${c.key}">${esc(c.label)}<span class="n">${n}</span></button>`}).join("");
+  b.innerHTML=cols.map(c=>{
+    const xs=rows.filter(s=>s.group===c.key),open=expanded[c.key],shown=open?xs:xs.slice(0,SHOW);
+    const more=xs.length>SHOW?`<button type="button" class="more" data-more="${c.key}">${open?"Show Fewer":`Show All ${xs.length}`}</button>`:"";
+    return `<section class="col" id="col-${c.key}" aria-labelledby="h-${c.key}">
+      <div class="sechead"><h2 id="h-${c.key}">${esc(c.label)}</h2><span class="meta">${xs.length}</span></div>
+      <p class="why">${esc(c.why)}</p>
+      <div class="group">${xs.length?shown.map(itemHtml).join("")+more:`<div class="empty">Nothing here right now.</div>`}</div>
+    </section>`;
+  }).join("");
+}
+
+// Clocks move every 30 seconds without re-rendering, so nothing shifts under a thumb.
+function tick(){
+  freshness();
+  document.querySelectorAll(".ago[data-at]").forEach(el=>{const t=Number(el.dataset.at);if(t)el.textContent="Active "+ago(Date.now()-t)});
+}
+setInterval(tick,30000);
+
+document.addEventListener("toggle",e=>{const d=e.target;if(d.dataset&&d.dataset.k)openK[d.dataset.k]=d.open},true);
+document.addEventListener("click",e=>{
+  const btn=e.target.closest("button");if(!btn)return;
+  if(btn.id==="routines"){hideRoutines=!hideRoutines;remember("hub.hideRoutines",hideRoutines?"1":"0");render();return}
+  if(btn.id==="completed"){showCompleted=!showCompleted;remember("hub.showCompleted",showCompleted?"1":"0");render();return}
+  if(btn.dataset.more){expanded[btn.dataset.more]=!expanded[btn.dataset.more];render();return}
+  if(btn.dataset.jump){const sec=$("col-"+btn.dataset.jump);if(sec){const calm=matchMedia("(prefers-reduced-motion: reduce)").matches;sec.scrollIntoView({behavior:calm?"auto":"smooth",block:"start"})}}
+});
+
+render();
+(async()=>{
+  const db=await window.claude?.use?.("db");
+  if(!db){phase="nodb";render();return}
+  db.doc("board/current").onSnapshot(snap=>{
+    const d=snap.exists?snap.data():null;
+    board=d&&Array.isArray(d.sessions)&&d.refreshedAt?d:null;
+    phase=board?"ok":"empty";render();
+  },()=>{phase="nodb";render()});
+})();
+</script>

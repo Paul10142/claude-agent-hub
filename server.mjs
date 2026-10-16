@@ -19,6 +19,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { sessionIndex, sessionDetail, turnInfo } from './lib-sessions.mjs';
 import { readTodo } from './lib-todo.mjs';
+import { hubDoc, saveHubDoc } from './lib-hub.mjs';
 
 const HOST = process.env.AGENT_DASH_HOST || '127.0.0.1';
 const PORT = Number(process.env.AGENT_DASH_PORT || 7823);
@@ -375,6 +376,21 @@ const server = http.createServer(async (req, res) => {
     const detail = await sessionDetail(id);
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(detail));
+    return;
+  }
+
+  // The board for the Agent Hub page on claude.ai (see lib-hub.mjs). ?save=1
+  // writes it to state/hub-board.json instead and answers with just the path,
+  // the fingerprint and the counts, so the session that copies it into the
+  // page's database reads a few lines, not the whole board, on every refresh.
+  if (url.pathname === '/api/hub') {
+    const doc = hubDoc({ sessions: snapshot().sessions, titles: titleCache, todoHubUrl: HUB_URL });
+    const out = url.searchParams.get('save') === '1'
+      ? { file: await saveHubDoc(path.join(HERE, 'state'), doc),
+          fingerprint: doc.fingerprint, refreshedAt: doc.refreshedAt, counts: doc.counts }
+      : doc;
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(out, null, 2));
     return;
   }
 
