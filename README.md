@@ -114,7 +114,7 @@ Ticking items builds a copy-pasteable hand-off note — the page can't edit your
 
 `hub/agent-hub.html` is a claude.ai Artifact page that shows the same columns as the Agents tab, so the board can be pinned in the Claude app's sidebar. Each card has one **Open in Claude** button: `claude://claude.ai/epitaxy/<id>` (opens the chat in the app), or on a phone `https://claude.ai/code/<id>` for sessions with Remote Control on.
 
-**Live in the Claude app.** A claude.ai page can't reach `127.0.0.1`, but the Claude desktop app can lend a page a local MCP server. `mcp-board.mjs` is one: zero dependencies, one read-only tool, `board`, that returns `GET /api/hub`. Add it to `~/Library/Application Support/Claude/claude_desktop_config.json` and restart the app:
+**Live in the Claude app.** A claude.ai page can't reach `127.0.0.1`, but the Claude desktop app can lend a page a local MCP server. `mcp-board.mjs` is one: zero dependencies, one read-only tool, `board`, that returns `GET /api/hub`. Quit the Claude app, then run `sh hub/install-connector.sh` from Terminal: it adds this entry to `~/Library/Application Support/Claude/claude_desktop_config.json` and reopens the app. Edit that file only while the app is closed: the running app keeps its settings in memory and writes them back over the file whenever a setting changes, which silently drops an entry added in the meantime.
 
 ```json
 "mcpServers": { "agent-board": { "command": "/usr/local/bin/node", "args": ["/path/to/agent-dashboard/mcp-board.mjs"] } }

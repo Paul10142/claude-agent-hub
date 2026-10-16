@@ -253,7 +253,7 @@ function liveFailed(e){
   const c=e?.code;
   const denied=["server_not_connected","not_in_manifest","blocked_by_policy","not_granted","capability_disabled","capability_removed"].includes(c);
   if(denied){live=false;showCopy()}
-  liveNote=c==="server_not_connected"?"Live updates only work in the Claude app on your Mac. Showing the last saved copy."
+  liveNote=c==="server_not_connected"?"Can't reach the Agent Board connector, so this is the last saved copy. Live updates work only in the Claude app on your Mac, once the connector is installed."
     :c==="not_in_manifest"?"This page isn't allowed to use the Agent Board connector. Turn it on from the page's Permissions menu, then tap Refresh."
     :c==="cancelled"||c==="approval_required"?"Live updates need your OK. Tap Refresh and choose Allow."
     :c==="tool_error"?(e.message||"The Agent Dashboard isn't answering on your Mac.")
