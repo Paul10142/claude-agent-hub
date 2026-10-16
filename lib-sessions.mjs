@@ -110,6 +110,29 @@ export function hasHubLine(text) {
   return text.split('\n').map(l => l.trim()).filter(Boolean).slice(-3).some(l => l.startsWith('**Hub:**'));
 }
 
+/**
+ * The open items under a reply's "## ✅ TO-DO ITEMS" heading: top-level "- [ ]"
+ * lines, up to the next heading, the Hub line or the archive sentence. Fillers
+ * like "- [ ] Nothing new from you." are not to-dos. section is false when the
+ * reply has no such heading at all.
+ */
+export function replyTodos(text) {
+  if (!text) return { section: false, items: [] };
+  const lines = text.split('\n');
+  const start = lines.findIndex(l => /^\s*(?:#{1,6}\s+|\*\*).*TO-?DO ITEMS/i.test(l));
+  if (start < 0) return { section: false, items: [] };
+  const items = [];
+  for (const l of lines.slice(start + 1)) {
+    if (/^\s*#{1,6}\s/.test(l) || l.trim().startsWith('**Hub:**') || l.trim() === ARCHIVE_LINE || l.trim() === '---') break;
+    const m = /^ ?[-*]\s+\[ \]\s+(.+)/.exec(l);
+    if (!m) continue;
+    const item = m[1].replace(/\*\*/g, '').trim();
+    if (/^(nothing|none|no new|no to-?dos?|n\/a)\b/i.test(item)) continue;
+    items.push(item);
+  }
+  return { section: true, items };
+}
+
 // Things that wake an agent up again without Paul: a background command, a
 // background subagent or a Monitor sends a <task-notification> when it ends.
 const LAUNCH = /^(?:Command running in background with ID: (\w+)|Async agent launched successfully|Monitor started \(task (\w+))/;
@@ -127,7 +150,7 @@ function readTurn(text) {
   const uses = new Map();     // tool_use id -> tool_use
   const launched = new Map(); // tool_use id -> {task, tool, desc, at}
   const done = new Set();     // tool_use ids and task ids that have finished
-  let reply = null, wakeAt = null;
+  let reply = null, replyAt = null, wakeAt = null;
   for (const raw of lines) {
     // Finish notices arrive as user text, queue operations or attachments, so
     // read them off the raw line rather than one JSON shape.
@@ -152,7 +175,7 @@ function readTurn(text) {
         }
       }
       const txt = c.filter(x => x?.type === 'text').map(x => x.text).join('').trim();
-      if (txt) reply = txt;
+      if (txt) { reply = txt; replyAt = Date.parse(d.timestamp) || null; }
     }
     if (d.type === 'user' && Array.isArray(c)) {
       for (const x of c) {
@@ -175,7 +198,7 @@ function readTurn(text) {
   const pending = [...launched.entries()]
     .filter(([id, v]) => !done.has(id) && !(v.task && done.has(v.task)))
     .map(([, v]) => ({ tool: v.tool, desc: v.desc, at: v.at }));
-  return { reply, pending, wakeAt };
+  return { reply, replyAt: reply ? replyAt : null, pending, wakeAt };
 }
 
 const pathMemo = new Map();  // cliId -> {p, at}
@@ -188,6 +211,8 @@ const TURN_BYTES = 6_000_000; // enough to reach back past most background launc
  * the transcript is re-read only after it changes.
  *   archivable  the reply ends with the archive sentence
  *   hubLine     the reply ends with a Hub line
+ *   todos       open items under its TO-DO ITEMS heading (todoSection: has one)
+ *   replyAt     when that reply was written
  *   pending     background commands, subagents and monitors still running
  *   wakeAt      when a scheduled check-in (ScheduleWakeup) is due, if any
  *   quietSince  when the transcript last changed
@@ -204,9 +229,13 @@ export async function turnInfo(cliId) {
   const hit = turnMemo.get(cliId);
   if (hit && hit.p === m.p && hit.mtimeMs === s.mtimeMs && hit.size === s.size) return hit.info;
   const t = readTurn(await tail(m.p, TURN_BYTES));
+  const todo = replyTodos(t.reply);
   const info = {
     archivable: isArchivable(t.reply),
     hubLine: hasHubLine(t.reply),
+    todos: todo.items,
+    todoSection: todo.section,
+    replyAt: t.replyAt,
     pending: t.pending,
     wakeAt: t.wakeAt,
     quietSince: s.mtimeMs,

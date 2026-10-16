@@ -123,6 +123,8 @@
   .launch:hover{filter:brightness(1.15)}
   .d-why{font-size:14px;color:var(--fg);margin-top:8px}
   .d-why b{font-weight:600;color:var(--muted)}
+  .d-todos{margin:4px 0 0;padding-left:20px}
+  .d-todos li{margin:2px 0}
   .d-sub{font-family:var(--mono);font-size:12px;color:var(--muted);margin:4px 0 2px;overflow-wrap:anywhere}
   .block{margin-top:18px}
   .block.reply{border-top:1px solid var(--line);padding-top:16px}
@@ -296,27 +298,33 @@ function md(src){
 }
 
 const SECTIONS = [
+  // It asked you something, or its last reply lists to-do items for you.
   { key:'needsInput', label:'Needs Input',   cls:'needs', pill:'w'  },
-  // Turn over, and nothing will happen until you look: read it, answer it, archive it.
+  // Turn over, no to-dos, nothing running: read it. Finished ones stay here an hour.
   { key:'ready',      label:'Ready for You', cls:'ready', pill:'ok' },
   { key:'working',    label:'Working',       cls:'',      pill:''   },
   // Turn over, but something it started will wake it again: CI, a run, a side session.
   { key:'background', label:'Background',    cls:'bg',    pill:'m'  },
-  // Ended with "Everything has been saved. You can archive this thread." Only shown on request.
+  // Ended with the archive sentence, no to-dos, over an hour ago. Only shown on request.
   { key:'completed',  label:'Completed',     cls:'done',  pill:'m'  },
 ];
 const LABEL = Object.fromEntries(SECTIONS.map(x => [x.key, x.label]));
 const ROWCLS = { needsInput:'needs', ready:'ready', working:'', background:'bg', completed:'done' };
 const SHOW = 5;   // rows a column shows before it scrolls
 
-// A routine that has asked for permission still shows: it is stuck until you answer.
-const visible = () => (state.sessions || []).filter(s => !hideRoutines || !s.routine || s.group === 'needsInput');
+// A routine waiting on a permission prompt still shows: it is stuck until you answer.
+const visible = () => (state.sessions || []).filter(s => !hideRoutines || !s.routine || s.blocked);
+// To-dos are markdown; a row shows plain text, so "[Kit](https://…)" reads "Kit".
+const plain = (x) => String(x).replace(/\[([^\]]+)\]\([^)]*\)/g, '$1').replace(/[*_`]/g, '');
+const firstTodo = (s) => s.todos?.length ? plain(s.todos[0]) + (s.todos.length > 1 ? ` (+${s.todos.length - 1} more)` : '') : '';
 
-// The second line: why it is waiting, what you need to do, or what it did.
+// The second line: what you need to do, why it is waiting, or what it did.
 function subOf(s){
+  if (s.todos?.length) return '→ ' + firstTodo(s);
   if (s.group === 'background' && s.why) return s.why;
-  if (s.group === 'ready' && s.needsAction) return '→ ' + s.needsAction;
-  return s.statusDetail || s.title || (projectOf(s) + (s.branch ? ' · ' + s.branch : ''));
+  // A prompt that opens with an app notice ("<system-reminder> …") says nothing useful.
+  const asked = s.title && !s.title.trimStart().startsWith('<') ? s.title : '';
+  return s.statusDetail || asked || (projectOf(s) + (s.branch ? ' · ' + s.branch : ''));
 }
 
 function rowHtml(s, t){
@@ -456,8 +464,9 @@ function renderDetail(){
   // 2026-10-16: opening it brings that session forward in the Claude window.
   const open = s.localId
     ? `<a class="launch" href="claude://claude.ai/epitaxy/${encodeURIComponent(s.localId)}">Open in Claude ↗</a>` : '';
-  const why = s.group==='background' && s.why ? `<div class="d-why"><b>Waiting on:</b> ${esc(s.why)}</div>`
-    : s.needsAction ? `<div class="d-why"><b>Your move:</b> ${esc(s.needsAction)}</div>` : '';
+  const why = s.todos?.length
+    ? `<div class="d-why"><b>Your to-dos:</b><ul class="d-todos">${s.todos.map(x => `<li>${md(x).replace(/^<p>|<\/p>$/g, '')}</li>`).join('')}</ul></div>`
+    : s.group==='background' && s.why ? `<div class="d-why"><b>Waiting on:</b> ${esc(s.why)}</div>` : '';
   el.innerHTML = `
     <div class="d-head"><h2 class="d-title">${esc(nameOf(s))}</h2>
       <span class="pill ${pillCls}">${esc(LABEL[s.group] || s.state)} · ${ago(Date.now()-(s.stateAt||s.lastSeen))}</span>${open}</div>

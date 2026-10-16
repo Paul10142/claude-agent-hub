@@ -94,37 +94,39 @@ function sweep() {
 }
 
 // ------------------------------------------------------------------ state
-// Four columns, decided by one question once a turn is over: will this agent
-// carry on without Paul?
-//   needsInput  — it has ASKED: a permission prompt or a question ('Waiting').
+// Paul's columns (2026-10-16), decided once a turn is over by two questions:
+// does it leave him something to do, and will it carry on without him?
+//   needsInput  — he has something to do: a permission prompt or question
+//                 ('Waiting'), or to-do items in the agent's latest reply (the
+//                 "## ✅ TO-DO ITEMS" checkboxes; the app's own turn summary
+//                 stands in when the reply has no such section).
+//   ready       — the turn is over, no to-dos, and nothing will happen until he
+//                 looks: a report to read, or a stalled agent. A finished one
+//                 (archive sentence) sits here for its first hour, so he sees it.
 //   working     — mid-turn ('Working').
-//   background  — the turn is over, but something it started will wake it again
-//                 on its own: a background command, subagent or monitor still
-//                 running, an open pull request whose CI the app is watching, a
-//                 scheduled check-in, or a session it started that is still going.
-//   ready       — the turn is over and nothing will happen until Paul looks:
-//                 a finished report to read, a decision, or a stalled agent.
-//   completed   — the reply ends with the archive sentence: the agent says all
-//                 is saved and the next step lives elsewhere (the hub, Notion).
-//                 All that is left is archiving. The page hides this column
-//                 until Paul clicks "Show Completed" (asked for 2026-10-16:
-//                 "things I haven't been able to archive yet").
+//   background  — the turn is over, no to-dos, but something it started will
+//                 wake it again on its own: a background command, subagent or
+//                 monitor still running, an open pull request whose CI the app
+//                 is watching, a scheduled check-in, or a session it started.
+//   completed   — the reply ends with the archive sentence, has no to-dos, and
+//                 is over an hour old: only archiving is left. Shown only after
+//                 "Show Completed" ("things I haven't been able to archive yet").
 //
-// History: an earlier rule left every ended turn under Working, so an agent
-// waiting on CI would not send Paul to a window with nothing to ask. Background
-// is now that bucket, said out loud, and everything else is honestly his move.
+// History: every ended turn used to sit under Working, so an agent waiting on
+// CI would not send Paul to a window with nothing to ask. Background is now that
+// bucket, said out loud. Then "Ready for You" took finished turns, and on
+// 2026-10-16 Paul drew the line between it and Needs Input: "Anything that has
+// a to-do item should show up under Needs input."
 //
-// Two overrides, both the agent's or the app's own words:
-//   - the reply ends with the archive sentence: completed, whatever is left in
-//     the background (a forgotten dev server must not hold it there), and even
-//     if the app's summary names a decision, because that decision is on the hub;
-//   - otherwise, the app's own turn summary names something Paul must do (needsAction):
-//     ready, even with CI still running, because he has a decision to make.
+// The archive sentence beats anything left running (a forgotten dev server must
+// not hold a finished session in Background). To-dos beat it: they stay in
+// Needs Input until Paul archives the session.
 //
 // Anything left running counts only while the transcript has moved in the last
 // three hours. Background tasks die with their session, and a session that has
 // been silent that long is not about to be woken.
 const BG_QUIET_MS = 3 * 60 * 60 * 1000;
+const FRESH_MS = 60 * 60 * 1000; // a finished session shows in Ready for You this long
 
 function backgroundReason(t, meta) {
   if (!t || now() - t.quietSince > BG_QUIET_MS) return null;
@@ -144,14 +146,24 @@ function backgroundReason(t, meta) {
   return why.length ? why.join(' · ') : null;
 }
 
+function todosOf(t, meta) {
+  if (t?.todos?.length) return t.todos;
+  // No TO-DO section (a short reply, or a question in the app's box): the app's
+  // own summary of the turn says whether Paul has something to do.
+  if (!t?.todoSection && meta?.needsAction) return [meta.needsAction];
+  return [];
+}
+
 function classify(state, t, meta) {
-  if (state === 'Waiting') return { group: 'needsInput' };
-  if (state === 'Working') return { group: 'working' };
+  if (state === 'Waiting') return { group: 'needsInput', todos: [] };
+  if (state === 'Working') return { group: 'working', todos: [] };
   // Idle, or Ended: the turn is over either way.
-  if (t?.archivable) return { group: 'completed' };
-  if (meta?.needsAction) return { group: 'ready' };
+  const todos = todosOf(t, meta);
+  if (todos.length) return { group: 'needsInput', todos };
+  if (t?.archivable)
+    return { group: now() - (t.replyAt || t.quietSince) < FRESH_MS ? 'ready' : 'completed', todos };
   const why = backgroundReason(t, meta);
-  return why ? { group: 'background', why } : { group: 'ready' };
+  return why ? { group: 'background', why, todos } : { group: 'ready', todos };
 }
 
 // The board used to show ONLY sessions that had fired a hook since this server
@@ -220,7 +232,7 @@ function snapshot() {
   for (const r of list) {
     const k = r.localId && running.get(r.localId);
     const t = turns.get(r.id);
-    if (!k || r.group !== 'ready' || t?.archivable || r.needsAction) continue;
+    if (!k || r.group !== 'ready' || t?.archivable) continue;
     if (t && now() - t.quietSince > BG_QUIET_MS) continue;
     r.group = 'background';
     r.why = k === 1 ? 'A session it started' : `${k} sessions it started`;
@@ -378,7 +390,10 @@ setInterval(sweep, 5_000).unref?.();
 // rather than inside snapshot(); turnInfo only re-reads a transcript that has
 // changed since last time.
 let checking = false, again = false;
-const turnKey = (t) => t ? `${t.archivable}|${t.hubLine}|${t.pending.length}|${t.wakeAt}|${t.quietSince > now() - BG_QUIET_MS}` : '';
+// Everything classify() reads, including the two clocks, so crossing the
+// one-hour or three-hour line re-sorts the board without any new event.
+const turnKey = (t) => t ? [t.archivable, t.todos.length, t.todoSection, t.pending.length, t.wakeAt,
+  t.quietSince > now() - BG_QUIET_MS, (t.replyAt || t.quietSince) > now() - FRESH_MS].join('|') : '';
 async function refreshTurns() {
   if (checking) { again = true; return; } // an event mid-check: run once more after
   checking = true;
