@@ -36,7 +36,7 @@ const TOOLS = [{
   name: 'open_session',
   title: 'Open a session',
   description: 'Bring one Claude Code session forward in the Claude app on this Mac, by its app session id '
-    + '(the "localId" in the board, e.g. local_8f12058d-…). Changes nothing else.',
+    + '(the "localId" in the board, e.g. local_1a2b3c4d-…). Changes nothing else.',
   inputSchema: {
     type: 'object',
     properties: { id: { type: 'string', pattern: '^local_[0-9a-fA-F-]{8,64}$', description: 'The session\'s localId from the board.' } },
