@@ -1,6 +1,8 @@
 {
   "_comment": "Copy to config.json and edit. config.json is gitignored — it holds your own paths.",
   "port": 7823,
+  "hubUrl": "",
+  "_hubUrl": "Optional. A link shown as the To-Do Hub button in the header; leave blank to hide it.",
   "lists": [
     {
       "project": "My Project",

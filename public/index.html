@@ -50,6 +50,7 @@
        padding:10px 16px;border-radius:10px;font:inherit;font-weight:600;font-size:14px;
        text-decoration:none;white-space:nowrap;cursor:pointer}
   .hub{background:var(--navy);color:var(--bg);border:0}
+  .hub[hidden]{display:none}
   .hub:hover{filter:brightness(1.15)}
   .tog{background:var(--surface);color:var(--accent);border:1px solid var(--line)}
   .tog:hover{background:var(--chip)}
@@ -200,7 +201,7 @@
     <div class="actions">
       <button class="tog" id="routines" type="button" aria-pressed="false">Hide Routines</button>
       <button class="tog" id="completed" type="button" aria-pressed="false">Show Completed</button>
-      <a class="hub" href="#" target="_blank" rel="noopener">To-Do Hub ↗</a>
+      <a class="hub" id="hub" hidden target="_blank" rel="noopener">To-Do Hub ↗</a>
       <span class="counts" id="count"></span>
     </div>
   </div>
@@ -480,11 +481,18 @@ function renderDetail(){
 
 function render(){ renderList(); renderDetail(); }
 
+// The hub link comes from config.json via the server, so no private address is
+// baked into this page.
+function showHub(url){
+  const a = $('hub');
+  if (url && /^https:\/\//.test(url)) { a.href = url; a.hidden = false; } else a.hidden = true;
+}
+
 let es;
 function connect(){
   es = new EventSource('/stream');
   es.onopen = () => { $('dot').classList.remove('off'); $('livetext').textContent='live'; };
-  es.onmessage = (e) => { try { state = JSON.parse(e.data); if (state.home) HOME = state.home; render(); } catch {} };
+  es.onmessage = (e) => { try { state = JSON.parse(e.data); if (state.home) HOME = state.home; showHub(state.hubUrl); render(); } catch {} };
   es.onerror = () => { $('dot').classList.add('off'); $('livetext').textContent='disconnected';
     try{es.close();}catch{} setTimeout(connect, 2000); };
 }

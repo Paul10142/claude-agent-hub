@@ -12,6 +12,7 @@
 
 import http from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -22,6 +23,19 @@ import { readTodo } from './lib-todo.mjs';
 const HOST = process.env.AGENT_DASH_HOST || '127.0.0.1';
 const PORT = Number(process.env.AGENT_DASH_PORT || 7823);
 const HERE = path.dirname(fileURLToPath(import.meta.url));
+
+// The header's "To-Do Hub" link. It points at a private page, so it lives in
+// config.json (gitignored) rather than in the published HTML; no hubUrl, no button.
+function hubUrl() {
+  for (const name of ['config.json', 'config.example.json']) {
+    try {
+      const u = JSON.parse(readFileSync(path.join(HERE, name), 'utf8')).hubUrl;
+      return typeof u === 'string' && /^https:\/\//.test(u) ? u : null;
+    } catch { /* try the next candidate */ }
+  }
+  return null;
+}
+const HUB_URL = hubUrl();
 
 /** session_id -> record */
 const sessions = new Map();
@@ -245,7 +259,7 @@ function snapshot() {
       (b.live ? 1 : 0) - (a.live ? 1 : 0) ||
       b.lastSeen - a.lastSeen,
   );
-  return { serverTime: now(), home: os.homedir(), sessions: list };
+  return { serverTime: now(), home: os.homedir(), hubUrl: HUB_URL, sessions: list };
 }
 
 function broadcast() {
