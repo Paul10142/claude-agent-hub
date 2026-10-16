@@ -36,6 +36,8 @@ export async function sessionIndex() {
       const d = JSON.parse(await readFile(f, 'utf8'));
       const cli = d.cliSessionId;
       if (!cli) return;
+      // The app's own summary of the latest turn, only if it is about that turn.
+      const current = d.postTurnSummaryFor && d.postTurnSummaryFor === d.lastAssistantUuid;
       next.set(cli, {
         title: d.title || null,
         localId: d.sessionId || null,
@@ -43,6 +45,16 @@ export async function sessionIndex() {
         cwd: d.worktreePath || d.cwd || null,
         archived: !!d.isArchived,
         lastActivityAt: d.lastActivityAt || null,
+        // Started by a scheduled task (daily health check, hub check, ...).
+        routine: !!d.scheduledTaskId,
+        // Something the app's summary says Paul has to do, e.g. "answer the 4 decisions".
+        needsAction: current ? (d.postTurnSummary?.needs_action || '').trim() : '',
+        // Its one-line summary of what the turn did, e.g. "#239 done; loop running next".
+        statusDetail: current ? (d.postTurnSummary?.status_detail || '').trim() : '',
+        // Open pull requests whose CI the app is watching; a failure wakes the agent.
+        watchedPrs: (d.prs || []).filter(p => p.state === 'OPEN' && p.autoFix).map(p => p.prNumber),
+        // The session that started this one; it gets woken when this one finishes.
+        parentLocalId: d.spawnedFrom?.sessionId || null,
       });
     } catch { /* a half-written file is not an error worth surfacing */ }
   }));
@@ -78,70 +90,129 @@ async function transcriptPath(cliId) {
   return candidates[0]?.p || null;
 }
 
-// --------------------------------------------------------- finished replies
-// Paul's global CLAUDE.md fixes how a final status reply ends. Until 2026-10-16
-// its last line started "**Hub:**" (where the to-dos went, whether the branch
-// can be archived). Since then a thread that can be archived ends with exactly
-// ARCHIVE_LINE, and one that can't ends with neither, because the agent is still
-// on it. Either marker means the agent has posted its final update and the next
-// move is Paul's: read it.
+// ---------------------------------------------------------- turn endings
+// Paul's global CLAUDE.md fixes how a status reply ends: a "**Hub:**" line, and,
+// only when nothing is left running and the thread can be archived, exactly
+// ARCHIVE_LINE as the very last line. (From 2026-10-16 to later that day the Hub
+// line was dropped, so some replies end with the archive sentence alone.)
 const ARCHIVE_LINE = 'Everything has been saved. You can archive this thread.';
 
-export function isFinishedReply(text) {
+/** The agent's own word that it is done: the archive sentence as the last line. */
+export function isArchivable(text) {
   if (!text) return false;
-  // The last three lines, because the archive sentence (or the scratch-folder
-  // offer) can follow the Hub line.
-  const end = text.split('\n').map(l => l.trim()).filter(Boolean).slice(-3);
-  if (end.at(-1)?.replace(/^[*_]+|[*_]+$/g, '') === ARCHIVE_LINE) return true;
-  return end.some(l => l.startsWith('**Hub:**'));
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+  return lines.at(-1)?.replace(/^[*_]+|[*_]+$/g, '') === ARCHIVE_LINE;
 }
 
+/** A status reply's closing Hub line, in the last three lines. */
+export function hasHubLine(text) {
+  if (!text) return false;
+  return text.split('\n').map(l => l.trim()).filter(Boolean).slice(-3).some(l => l.startsWith('**Hub:**'));
+}
+
+// Things that wake an agent up again without Paul: a background command, a
+// background subagent or a Monitor sends a <task-notification> when it ends.
+const LAUNCH = /^(?:Command running in background with ID: (\w+)|Async agent launched successfully|Monitor started \(task (\w+))/;
+const TASK_DONE = new Set(['completed', 'failed', 'killed', 'stopped']);
+const textOf = (c) => typeof c === 'string' ? c
+  : Array.isArray(c) ? c.map(x => (x && typeof x.text === 'string') ? x.text : '').join('') : '';
+
 /**
- * The agent's latest reply, or null if anything has been sent to it since: a
- * new prompt, an answer, or a background-task notice it has yet to answer.
+ * How the latest turn ended, read from the transcript: the agent's latest reply
+ * (null if anything has been sent to it since), and what it left running.
  */
-function latestReply(text) {
+function readTurn(text) {
   const lines = text.split('\n');
   lines.shift(); // a tail read starts mid-line
-  for (let i = lines.length - 1; i >= 0; i--) {
+  const uses = new Map();     // tool_use id -> tool_use
+  const launched = new Map(); // tool_use id -> {task, tool, desc, at}
+  const done = new Set();     // tool_use ids and task ids that have finished
+  let reply = null, wakeAt = null;
+  for (const raw of lines) {
+    // Finish notices arrive as user text, queue operations or attachments, so
+    // read them off the raw line rather than one JSON shape.
+    if (raw.includes('<task-notification>')) {
+      for (const m of raw.matchAll(/<task-notification>([\s\S]*?)<\/task-notification>/g)) {
+        const st = /<status>(\w+)<\/status>/.exec(m[1]);
+        if (st && TASK_DONE.has(st[1]))
+          for (const k of m[1].matchAll(/<(?:tool-use-id|task-id)>(\w+)</g)) done.add(k[1]);
+      }
+    }
     let d;
-    try { d = JSON.parse(lines[i]); } catch { continue; }
+    try { d = JSON.parse(raw); } catch { continue; }
     if (d.isSidechain) continue;
     const c = d.message?.content;
-    if (d.type === 'user' && !d.isMeta) {
-      const toolResult = Array.isArray(c) && c.some(x => x?.type === 'tool_result');
-      if (!toolResult) return null;
-    }
     if (d.type === 'assistant' && Array.isArray(c)) {
+      for (const x of c) {
+        if (x?.type !== 'tool_use') continue;
+        uses.set(x.id, x);
+        if (x.name === 'ScheduleWakeup') {
+          const at = Date.parse(d.timestamp);
+          wakeAt = x.input?.stop ? null : (at && x.input?.delaySeconds ? at + x.input.delaySeconds * 1000 : null);
+        }
+      }
       const txt = c.filter(x => x?.type === 'text').map(x => x.text).join('').trim();
-      if (txt) return txt;
+      if (txt) reply = txt;
     }
+    if (d.type === 'user' && Array.isArray(c)) {
+      for (const x of c) {
+        if (x?.type !== 'tool_result') continue;
+        const u = uses.get(x.tool_use_id);
+        const m = u && LAUNCH.exec(textOf(x.content).trimStart());
+        if (!m) continue;
+        const agent = /agentId: (\w+)/.exec(textOf(x.content));
+        launched.set(x.tool_use_id, {
+          task: m[1] || m[2] || agent?.[1] || null,
+          tool: u.name,
+          desc: u.input?.description || '',
+          at: Date.parse(d.timestamp) || null,
+        });
+      }
+    }
+    // A prompt, an answer or a notice sent after the reply makes it old news.
+    if (d.type === 'user' && !d.isMeta && !(Array.isArray(c) && c.some(x => x?.type === 'tool_result'))) reply = null;
   }
-  return null;
+  const pending = [...launched.entries()]
+    .filter(([id, v]) => !done.has(id) && !(v.task && done.has(v.task)))
+    .map(([, v]) => ({ tool: v.tool, desc: v.desc, at: v.at }));
+  return { reply, pending, wakeAt };
 }
 
 const pathMemo = new Map();  // cliId -> {p, at}
 const PATH_TTL = 60_000;     // a session can move folders, so re-resolve now and then
-const replyMemo = new Map(); // cliId -> {p, mtimeMs, size, finished}
+const turnMemo = new Map();  // cliId -> {p, mtimeMs, size, info}
+const TURN_BYTES = 6_000_000; // enough to reach back past most background launches
 
 /**
- * Has this session's latest reply been a finished status reply? Cheap enough to
- * call every few seconds: the transcript is re-read only after it changes.
+ * How this session's latest turn ended. Cheap enough to call every few seconds:
+ * the transcript is re-read only after it changes.
+ *   archivable  the reply ends with the archive sentence
+ *   hubLine     the reply ends with a Hub line
+ *   pending     background commands, subagents and monitors still running
+ *   wakeAt      when a scheduled check-in (ScheduleWakeup) is due, if any
+ *   quietSince  when the transcript last changed
  */
-export async function replyFinished(cliId) {
+export async function turnInfo(cliId) {
   let m = pathMemo.get(cliId);
   if (!m || Date.now() - m.at > PATH_TTL) {
     m = { p: await transcriptPath(cliId), at: Date.now() };
     pathMemo.set(cliId, m);
   }
-  if (!m.p) return false;
+  if (!m.p) return null;
   let s;
-  try { s = await stat(m.p); } catch { pathMemo.delete(cliId); return false; }
-  const hit = replyMemo.get(cliId);
-  if (hit && hit.p === m.p && hit.mtimeMs === s.mtimeMs && hit.size === s.size) return hit.finished;
-  const finished = isFinishedReply(latestReply(await tail(m.p)));
-  replyMemo.set(cliId, { p: m.p, mtimeMs: s.mtimeMs, size: s.size, finished });
-  return finished;
+  try { s = await stat(m.p); } catch { pathMemo.delete(cliId); return null; }
+  const hit = turnMemo.get(cliId);
+  if (hit && hit.p === m.p && hit.mtimeMs === s.mtimeMs && hit.size === s.size) return hit.info;
+  const t = readTurn(await tail(m.p, TURN_BYTES));
+  const info = {
+    archivable: isArchivable(t.reply),
+    hubLine: hasHubLine(t.reply),
+    pending: t.pending,
+    wakeAt: t.wakeAt,
+    quietSince: s.mtimeMs,
+  };
+  turnMemo.set(cliId, { p: m.p, mtimeMs: s.mtimeMs, size: s.size, info });
+  return info;
 }
 
 /**

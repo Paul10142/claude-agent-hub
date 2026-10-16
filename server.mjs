@@ -16,7 +16,7 @@ import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import os from 'node:os';
-import { sessionIndex, sessionDetail, replyFinished } from './lib-sessions.mjs';
+import { sessionIndex, sessionDetail, turnInfo } from './lib-sessions.mjs';
 import { readTodo } from './lib-todo.mjs';
 
 const HOST = process.env.AGENT_DASH_HOST || '127.0.0.1';
@@ -29,8 +29,8 @@ const sessions = new Map();
 let titleCache = new Map();
 /** connected SSE clients */
 const clients = new Set();
-/** session id -> true when its latest reply is a finished status reply */
-const finished = new Map();
+/** session id -> how its latest turn ended (see turnInfo in lib-sessions.mjs) */
+const turns = new Map();
 
 const now = () => Date.now();
 
@@ -94,40 +94,64 @@ function sweep() {
 }
 
 // ------------------------------------------------------------------ state
-// Paul's mental model, not the hook's:
-//   needsInput  — the agent has ASKED for something: a permission prompt or a
-//                 question ('Waiting').
-//   ready       — the turn has ended AND the last reply is a finished status
-//                 reply (see isFinishedReply in lib-sessions.mjs). The agent has
-//                 posted its final update; Paul's move is to read it.
-//   working     — running, or between turns without a finished reply.
-//   completed   — the session has ended.
+// Four columns, decided by one question once a turn is over: will this agent
+// carry on without Paul?
+//   needsInput  — it has ASKED: a permission prompt or a question ('Waiting').
+//   working     — mid-turn ('Working').
+//   background  — the turn is over, but something it started will wake it again
+//                 on its own: a background command, subagent or monitor still
+//                 running, an open pull request whose CI the app is watching, a
+//                 scheduled check-in, or a session it started that is still going.
+//   ready       — the turn is over and nothing will happen until Paul looks:
+//                 a finished report to read, a decision, or a stalled agent.
 //
-// 'Idle' alone means the turn ended — which is NOT the same as wanting him. An
-// agent that kicked off a CI run and is waiting on it ends its turn and sits Idle
-// for many minutes while GitHub works; calling that "needs input" sent Paul to a
-// window that had nothing to ask. So Idle splits on what the agent last said: a
-// reply that closes with the Hub line or the archive sentence is Ready for You,
-// anything else stays under Working. False "working" is still cheaper than a
-// false "needs you", and the closing line is the agent saying, in Paul's own
-// format, that it is done.
+// History: an earlier rule left every ended turn under Working, so an agent
+// waiting on CI would not send Paul to a window with nothing to ask. Background
+// is now that bucket, said out loud, and everything else is honestly his move.
 //
-// A store-only row (no live hook signal) reads 'Ended' after 45 quiet minutes,
-// but it is still an open, unarchived window. If its last reply is a finished
-// one, it is waiting for Paul, so it counts as ready too. Otherwise "Ready for
-// You" would empty itself every time he stepped away for an hour.
-function groupOf(state, done, live) {
-  if (state === 'Waiting') return 'needsInput';
-  if (done && (state === 'Idle' || (!live && state === 'Ended'))) return 'ready';
-  if (state === 'Ended') return 'completed';
-  return 'working';
+// Two overrides, both the agent's or the app's own words:
+//   - the reply ends with the archive sentence: done, so ready, whatever is left
+//     in the background (a forgotten dev server must not hold it there);
+//   - the app's own turn summary names something Paul must do (needsAction):
+//     ready, even with CI still running, because he has a decision to make.
+//
+// Anything left running counts only while the transcript has moved in the last
+// three hours. Background tasks die with their session, and a session that has
+// been silent that long is not about to be woken.
+const BG_QUIET_MS = 3 * 60 * 60 * 1000;
+
+function backgroundReason(t, meta) {
+  if (!t || now() - t.quietSince > BG_QUIET_MS) return null;
+  const why = [];
+  const n = (k, one, many) => (k === 1 ? one : `${k} ${many}`);
+  const cmds = t.pending.filter(p => p.tool === 'Bash');
+  const agents = t.pending.filter(p => p.tool === 'Agent');
+  const mons = t.pending.filter(p => p.tool === 'Monitor');
+  if (cmds.length) why.push(cmds.length === 1 && cmds[0].desc ? cmds[0].desc : n(cmds.length, 'A background command', 'background commands'));
+  if (agents.length) why.push(n(agents.length, 'A helper agent', 'helper agents'));
+  if (mons.length) why.push(mons.length === 1 && mons[0].desc ? mons[0].desc : n(mons.length, 'A monitor', 'monitors'));
+  if (meta?.watchedPrs?.length) why.push(`CI on PR #${meta.watchedPrs.join(', #')}`);
+  if (t.wakeAt && t.wakeAt > now()) {
+    const d = new Date(t.wakeAt);
+    why.push(`Check-in at ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`);
+  }
+  return why.length ? why.join(' · ') : null;
+}
+
+function classify(state, t, meta) {
+  if (state === 'Waiting') return { group: 'needsInput' };
+  if (state === 'Working') return { group: 'working' };
+  // Idle, or Ended: the turn is over either way.
+  if (t?.archivable) return { group: 'ready' };
+  if (meta?.needsAction) return { group: 'ready' };
+  const why = backgroundReason(t, meta);
+  return why ? { group: 'background', why } : { group: 'ready' };
 }
 
 // The board used to show ONLY sessions that had fired a hook since this server
 // last started, so a restart emptied it and a quiet window stayed invisible.
 // The app's own store is the complete list; live hook events layer on top.
-const RECENT_MS = 45 * 60 * 1000;      // still likely an open window
-const KEEP_MS   = 24 * 60 * 60 * 1000; // older than this is history, not a board item
+const KEEP_MS = 24 * 60 * 60 * 1000; // older than this is history, not a board item
 
 function fromStore() {
   const out = [];
@@ -140,9 +164,11 @@ function fromStore() {
       id: cli,
       live: false,                              // no hook signal — say so, never guess loudly
       agent: 'Claude',
-      // Not emitting events means it is not running. So it is either waiting on
-      // Paul or finished; recency is the only evidence available.
-      state: Date.now() - last < RECENT_MS ? 'Idle' : 'Ended',
+      // Not emitting events means it is not mid-turn. Which column it belongs
+      // in is read from its transcript (classify). It used to read 'Ended'
+      // after 45 quiet minutes and drop into a Completed section; Paul archives
+      // what he has finished, so an unarchived window is never "completed".
+      state: 'Idle',
       cwd: m.cwd || '',
       branch: m.branch || null,
       title_session: m.title || null,
@@ -162,15 +188,38 @@ function snapshot() {
     return {
       ...s,
       live: true,
-      group: groupOf(s.state, finished.get(s.id), true),
+      ...classify(s.state, turns.get(s.id), meta),
       blocked: s.state === 'Waiting',       // permission prompt: the loud kind
       title_session: meta.title || null,     // the chat-window name from the app
       localId: meta.localId || null,
       branch: s.branch || meta.branch || null,
+      routine: !!meta.routine,
+      needsAction: meta.needsAction || '',
+      statusDetail: meta.statusDetail || '',
     };
   });
-  for (const st of fromStore()) list.push({ ...st, group: groupOf(st.state, finished.get(st.id), false), blocked: false });
-  const rank = { needsInput: 0, ready: 1, working: 2, completed: 3 };
+  for (const st of fromStore()) {
+    const meta = titles.get(st.id) || {};
+    list.push({ ...st, ...classify(st.state, turns.get(st.id), meta), blocked: false,
+      routine: !!meta.routine, needsAction: meta.needsAction || '', statusDetail: meta.statusDetail || '' });
+  }
+  // A session that started side sessions is woken when they finish, so while
+  // one of them is still going, so is it.
+  const running = new Map();
+  for (const r of list) {
+    const parent = titles.get(r.id)?.parentLocalId;
+    if (parent && (r.group === 'working' || r.group === 'background'))
+      running.set(parent, (running.get(parent) || 0) + 1);
+  }
+  for (const r of list) {
+    const k = r.localId && running.get(r.localId);
+    const t = turns.get(r.id);
+    if (!k || r.group !== 'ready' || t?.archivable || r.needsAction) continue;
+    if (t && now() - t.quietSince > BG_QUIET_MS) continue;
+    r.group = 'background';
+    r.why = k === 1 ? 'A session it started' : `${k} sessions it started`;
+  }
+  const rank = { needsInput: 0, ready: 1, working: 2, background: 3 };
   list.sort(
     (a, b) =>
       (rank[a.group] ?? 9) - (rank[b.group] ?? 9) ||
@@ -221,12 +270,12 @@ async function ingest(ev) {
   if (prev.state !== rec.state) rec.stateAt = now();
   else rec.stateAt = prev.stateAt || now();
 
-  // A new turn makes the last reply old news; until the next one is read, the
-  // session is not ready.
-  if (rec.state !== 'Idle') finished.delete(id);
+  // A new turn makes the last one old news; until the next one is read, the
+  // board knows nothing about how it ended.
+  if (rec.state === 'Working') turns.delete(id);
   sessions.set(id, rec);
   broadcast();
-  if (rec.state === 'Idle') refreshFinished();
+  if (rec.state !== 'Working') refreshTurns();
 
   // Enrichment is deliberately after the broadcast: the board updates
   // instantly, then fills in project/branch a moment later.
@@ -319,34 +368,34 @@ const server = http.createServer(async (req, res) => {
 
 setInterval(sweep, 5_000).unref?.();
 
-// Which ended turns closed with a finished status reply. Reads transcripts, so it
-// runs beside the board rather than inside snapshot(); replyFinished only re-reads
-// a transcript that has changed since last time.
+// How each ended turn finished. Reads transcripts, so it runs beside the board
+// rather than inside snapshot(); turnInfo only re-reads a transcript that has
+// changed since last time.
 let checking = false, again = false;
-async function refreshFinished() {
-  if (checking) { again = true; return; } // an Idle event mid-check: run once more after
+const turnKey = (t) => t ? `${t.archivable}|${t.hubLine}|${t.pending.length}|${t.wakeAt}|${t.quietSince > now() - BG_QUIET_MS}` : '';
+async function refreshTurns() {
+  if (checking) { again = true; return; } // an event mid-check: run once more after
   checking = true;
   try {
     const ids = new Set();
-    for (const s of sessions.values()) if (s.state === 'Idle') ids.add(s.id);
+    for (const s of sessions.values()) if (s.state !== 'Working') ids.add(s.id);
     for (const s of fromStore()) ids.add(s.id);
     let changed = false;
     for (const id of ids) {
-      let done = await replyFinished(id).catch(() => false);
+      const t = await turnInfo(id).catch(() => null);
       // A new turn may have started while the transcript was being read.
-      const cur = sessions.get(id);
-      if (cur && cur.state !== 'Idle') done = false;
-      if (!!finished.get(id) !== done) changed = true;
-      if (done) finished.set(id, true); else finished.delete(id);
+      if (sessions.get(id)?.state === 'Working') continue;
+      if (turnKey(turns.get(id)) !== turnKey(t)) changed = true;
+      if (t) turns.set(id, t); else turns.delete(id);
     }
-    for (const id of finished.keys()) if (!ids.has(id)) { finished.delete(id); changed = true; }
+    for (const id of turns.keys()) if (!ids.has(id)) turns.delete(id);
     if (changed) broadcast();
   } finally {
     checking = false;
-    if (again) { again = false; refreshFinished(); }
+    if (again) { again = false; refreshTurns(); }
   }
 }
-setInterval(refreshFinished, 5_000).unref?.();
+setInterval(refreshTurns, 5_000).unref?.();
 
 async function refreshTitles() {
   try {
@@ -362,7 +411,7 @@ async function refreshTitles() {
     if (changed && sessions.size) broadcast();
   } catch { /* the board still works without titles */ }
 }
-refreshTitles().then(refreshFinished);
+refreshTitles().then(refreshTurns);
 setInterval(refreshTitles, 5_000).unref?.();
 
 server.on('error', (err) => {
