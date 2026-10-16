@@ -294,7 +294,7 @@ document.addEventListener("click",async e=>{
   catch(err){
     const c=err?.code;
     if(c==="cancelled")return;
-    openMsg[id]=c==="not_in_manifest"?"This page isn't allowed to open sessions. Turn it on from the page's Permissions menu."
+    openMsg[id]=c==="not_in_manifest"?"Can't open chats from here yet. Quit and reopen Claude once; if this still shows after that, allow it in this page's Permissions menu."
       :c==="server_not_connected"?"Opening from here needs the Agent Board connector, which works only in the Claude app on your Mac."
       :"Couldn't open it. Quit and reopen the Claude app once to finish setting this up.";
     render();
