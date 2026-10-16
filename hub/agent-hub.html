@@ -67,6 +67,7 @@ code{font-size:13px;background:var(--chip);padding:0 4px;border-radius:4px;overf
 .btn{display:inline-flex;align-items:center;box-sizing:border-box;min-height:40px;padding:8px 14px;border-radius:10px;font:inherit;font-weight:600;font-size:14px;text-decoration:none;border:1px solid var(--line);background:var(--surface);color:var(--accent);white-space:nowrap;cursor:pointer}
 .btn:hover{background:var(--chip)}
 .btn.open{background:var(--navy);color:var(--bg);border-color:var(--navy)}
+.note{font-size:13px;color:var(--needs)}
 .more{font:inherit;font-size:14px;font-weight:600;width:100%;background:var(--chip);color:var(--accent);border:0;border-top:1px solid var(--line);padding:10px 14px;min-height:44px;cursor:pointer;text-align:left}
 .empty{color:var(--muted);font-size:14px;padding:12px 14px}
 .panel{border:1px solid var(--line);border-radius:12px;background:var(--surface);padding:14px 16px;display:flex;flex-direction:column;gap:8px}
@@ -118,7 +119,7 @@ let board=null, phase="loading", db=null;
 const HOST="host:agent-board";
 let mcp=null, live=false, liveAt=0, liveNote="", copy=null, refreshing=false, unwatch=null;
 let savedFp="", savedAt=0;          // the copy this view last wrote to board/current
-const expanded={}, openK={};
+const expanded={}, openK={}, openMsg={};   // openMsg: localId -> why Open in Claude didn't work
 // Paul is on the Mac almost always: Open goes to the Claude app there. A phone can't open the app link, so it gets
 // the session's chat on claude.ai (Remote Control) when there is one.
 const onPhone=/iPhone|iPad|iPod|Android/i.test(navigator.userAgent||"");
@@ -166,8 +167,9 @@ function itemHtml(s){
   const web=okBridge(s.bridge)?`https://claude.ai/code/${s.bridge}`:"";
   const app=okLocal(s.localId)?`claude://claude.ai/epitaxy/${s.localId}`:"";
   const href=onPhone?(web||app):(app||web);
-  const open=href?`<a class="btn open" href="${esc(href)}" target="_blank" rel="noopener">Open in Claude</a>`:"";
-  const acts=open;
+  const open=href?`<a class="btn open" href="${esc(href)}" target="_blank" rel="noopener"${app&&!onPhone?` data-open="${esc(s.localId)}"`:""}>Open in Claude</a>`:"";
+  const msg=openMsg[s.localId]?`<span class="note">${esc(openMsg[s.localId])}</span>`:"";
+  const acts=open+msg;
   return `<article class="item k-${esc(s.group)}">
     <div class="r1"><span class="t">${esc(s.title)}${tags}</span><span class="ago" data-at="${Number(s.lastActiveAt)||""}">${s.lastActiveAt?"Active "+ago(Date.now()-s.lastActiveAt):""}</span></div>
     ${sub.text?`<p class="sub${sub.q?" q":""}">${esc(sub.text)}</p>`:""}
@@ -281,6 +283,23 @@ async function refreshNow(){
 }
 
 document.addEventListener("toggle",e=>{const d=e.target;if(d.dataset&&d.dataset.k)openK[d.dataset.k]=d.open},true);
+
+// Open in Claude: a page inside the app can't follow the claude:// link itself, so the connector opens it on the Mac.
+// Without the connector (a browser, the phone) the plain link is left to do what it can.
+document.addEventListener("click",async e=>{
+  const a=e.target.closest("a[data-open]");if(!a||!mcp)return;
+  e.preventDefault();
+  const id=a.dataset.open;delete openMsg[id];
+  try{await mcp.callTool(HOST,"open_session",{id},{cache:false})}
+  catch(err){
+    const c=err?.code;
+    if(c==="cancelled")return;
+    openMsg[id]=c==="not_in_manifest"?"This page isn't allowed to open sessions. Turn it on from the page's Permissions menu."
+      :c==="server_not_connected"?"Opening from here needs the Agent Board connector, which works only in the Claude app on your Mac."
+      :"Couldn't open it. Quit and reopen the Claude app once to finish setting this up.";
+    render();
+  }
+});
 document.addEventListener("click",e=>{
   const btn=e.target.closest("button");if(!btn)return;
   if(btn.id==="refresh"){refreshNow();return}
