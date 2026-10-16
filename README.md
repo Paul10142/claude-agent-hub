@@ -32,7 +32,7 @@ It also reads Claude's own session store for the real chat-window titles, and ea
 Requires Node 18+ and macOS.
 
 ```bash
-git clone https://github.com/YOURNAME/agent-dashboard.git ~/.claude/agent-dashboard
+git clone https://github.com/YOURNAME/claude-agent-hub.git ~/.claude/agent-dashboard
 cd ~/.claude/agent-dashboard
 cp config.example.json config.json      # then edit it — see below
 ```
