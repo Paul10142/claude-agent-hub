@@ -95,7 +95,8 @@ button:focus-visible,a:focus-visible,summary:focus-visible{outline:2px solid var
 
 <footer>
   <p>A copy of the board on your Mac. It shows each Claude session from the last 24 hours that isn't archived, in the same columns.</p>
-  <p>“Open on Phone” works for sessions with Remote Control on. “Open on Mac” brings the session forward in the Claude app on your Mac.</p>
+  <p>“Open on Phone” opens the session's chat on claude.ai, on any device, for sessions with Remote Control on. “Open on Mac” opens the same chat in the Claude app on your Mac.</p>
+  <p>Sessions run on your Mac, so while it sleeps they pause, the chats can't take new messages, and this page keeps its last copy.</p>
 </footer>
 </div>
 
@@ -175,7 +176,7 @@ function freshness(){
   const at=Date.parse(board.refreshedAt),age=Date.now()-at;
   if(age<15*60000){el.className="fresh ok";tx.innerHTML=`Updated <b>${esc(ago(age))}</b> (${esc(clock(at))}) from your Mac.`}
   else if(age<STALE_MIN*60000){el.className="fresh";tx.innerHTML=`Updated <b>${esc(ago(age))}</b> (${esc(clock(at))}) from your Mac.`}
-  else{el.className="fresh old";tx.innerHTML=`Last update from your Mac was <b>${esc(ago(age))}</b> (${esc(clock(at))}). Sessions may have moved since.`}
+  else{el.className="fresh old";tx.innerHTML=`Last update from your Mac was <b>${esc(ago(age))}</b> (${esc(clock(at))}). Sessions may have moved since, unless your Mac is asleep.`}
 }
 
 function render(){
