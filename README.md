@@ -112,9 +112,17 @@ Ticking items builds a copy-pasteable hand-off note — the page can't edit your
 
 ## Agent Hub: the board on your phone
 
-`hub/agent-hub.html` is a claude.ai Artifact page that shows the same columns as the Agents tab, so you can check your sessions from claude.ai on any device. Each card has **Open on Phone** (`https://claude.ai/code/<id>`, for sessions with Remote Control on) and **Open on Mac** (`claude://claude.ai/epitaxy/<id>`).
+`hub/agent-hub.html` is a claude.ai Artifact page that shows the same columns as the Agents tab, so the board can be pinned in the Claude app's sidebar. Each card has one **Open in Claude** button: `claude://claude.ai/epitaxy/<id>` (opens the chat in the app), or on a phone `https://claude.ai/code/<id>` for sessions with Remote Control on.
 
-The page reads one document, `board/current`, from its Artifact database. Nothing outside the Claude app can write that database: only the app's own Claude sessions get the `ArtifactData` tool, so a plain `claude -p` run from this server cannot do it. A refresh is therefore two steps run by a session inside the app:
+**Live in the Claude app.** A claude.ai page can't reach `127.0.0.1`, but the Claude desktop app can lend a page a local MCP server. `mcp-board.mjs` is one: zero dependencies, one read-only tool, `board`, that returns `GET /api/hub`. Add it to `~/Library/Application Support/Claude/claude_desktop_config.json` and restart the app:
+
+```json
+"mcpServers": { "agent-board": { "command": "/usr/local/bin/node", "args": ["/path/to/agent-dashboard/mcp-board.mjs"] } }
+```
+
+Publish the page with `capabilities: {db: {}, mcp: {servers: [{server: "host:agent-board", tools: ["board"]}]}}`. Opened in the app, it polls the tool every 30 seconds (the platform's floor) and on **Refresh**. Host servers answer only in the desktop app and only for the page's owner; anywhere else the page shows the last saved copy. While live, it writes that copy to `board/current` whenever the board's fingerprint changes (at most once a minute).
+
+**The saved copy.** The page reads one document, `board/current`, from its Artifact database when the connector isn't there. Besides the live page itself, only the app's own Claude sessions can write that database (`ArtifactData`); a plain `claude -p` run from this server cannot. A copy by hand is two steps run by a session inside the app:
 
 1. `curl -s 'http://127.0.0.1:7823/api/hub?save=1'` writes the board to `state/hub-board.json` and answers with that path, a `fingerprint` and the counts. The fingerprint ignores the clocks, so an unchanged fingerprint means the page would show the same thing.
 2. `ArtifactData` `set` on collection `board`, doc `current`, with `file_path` set to that file and `if_version` set to the version the last write returned.

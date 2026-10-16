@@ -27,7 +27,10 @@ header{display:flex;flex-direction:column;gap:14px}
 a{color:var(--accent);overflow-wrap:anywhere}
 .hrow{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
 .hlinks{display:flex;gap:8px;flex-wrap:wrap}
-a.hub{border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:6px 12px;text-decoration:none;font-weight:600;font-size:14px;white-space:nowrap;min-height:36px;box-sizing:border-box;display:inline-flex;align-items:center}
+a.hub,button.hub{border:1px solid var(--line);background:var(--surface);color:var(--accent);border-radius:8px;padding:6px 12px;text-decoration:none;font:inherit;font-weight:600;font-size:14px;white-space:nowrap;min-height:36px;box-sizing:border-box;display:inline-flex;align-items:center;cursor:pointer}
+button.hub.go{background:var(--navy);color:var(--bg);border-color:var(--navy)}
+button.hub:disabled{opacity:.6;cursor:default}
+.livenote{margin:0;font-size:13px;color:var(--needs)}
 .fresh{margin:0;font-size:14px;color:var(--muted);display:flex;gap:8px;align-items:baseline}
 .fresh .dot{width:9px;height:9px;border-radius:50%;background:var(--quiet);flex:none;transform:translateY(-1px)}
 .fresh.ok .dot{background:var(--ready)}
@@ -85,8 +88,9 @@ button:focus-visible,a:focus-visible,summary:focus-visible{outline:2px solid var
 
 <div class="wrap">
 <header>
-  <div class="hrow"><h1>Agent Hub</h1><div class="hlinks"><a class="hub" id="todohub" href="#" target="_blank" rel="noopener" hidden>To-Do Hub ↗</a><a class="hub" href="http://127.0.0.1:7823" target="_blank" rel="noopener" title="The live board runs on your Mac only">Mac Board ↗</a></div></div>
+  <div class="hrow"><h1>Agent Hub</h1><div class="hlinks"><button type="button" class="hub go" id="refresh" hidden>Refresh</button><a class="hub" id="todohub" href="#" target="_blank" rel="noopener" hidden>To-Do Hub ↗</a><a class="hub" href="http://127.0.0.1:7823" target="_blank" rel="noopener" title="The board on your Mac, in a browser">Mac Board ↗</a></div></div>
   <p class="fresh" id="fresh" role="status"><span class="dot"></span><span id="freshtext">Loading the board…</span></p>
+  <p class="livenote" id="livenote" hidden></p>
   <nav class="chips" id="jump" aria-label="Jump to a column"></nav>
   <div class="chips" id="toggles"><button type="button" class="chip" id="routines" aria-pressed="false" hidden></button><button type="button" class="chip" id="completed" aria-pressed="false" hidden></button></div>
 </header>
@@ -94,14 +98,17 @@ button:focus-visible,a:focus-visible,summary:focus-visible{outline:2px solid var
 <main class="board" id="board"><div class="panel"><p>Loading the board…</p></div></main>
 
 <footer>
-  <p>A copy of the board on your Mac. It shows each Claude session from the last 24 hours that isn't archived, in the same columns.</p>
+  <p>The board from your Mac: each Claude session from the last 24 hours that isn't archived, in the same columns. In the Claude app on your Mac it's live, updating every 30 seconds or when you tap Refresh. Anywhere else it shows the last saved copy.</p>
   <p>“Open in Claude” opens the session's chat in the Claude app on your Mac. On a phone it opens the chat on claude.ai instead, for sessions with Remote Control on.</p>
   <p>Sessions run on your Mac, so while it sleeps they pause, the chats can't take new messages, and this page keeps its last copy.</p>
 </footer>
 </div>
 
 <script>
-// The Mac writes the whole board into one database document, board/current (see lib-hub.mjs in the dashboard).
+// Live: in the Claude app on Paul's Mac, the page reads the board from the "agent-board" connector (mcp-board.mjs,
+// a local MCP server the app starts) every 30 seconds, and on Refresh. Anywhere else (a browser, the phone) there is
+// no connector, so it shows the last copy saved in board/current, which the live view keeps up to date.
+// The whole board is one database document, board/current (see lib-hub.mjs in the dashboard).
 // Archive writes actions/archive-<localId>; a Claude session in the app carries it out and deletes the row, or marks
 // it failed with a reason. The board says whether that is set up ("actions": true); until then there is no button.
 const COLS=[
@@ -114,6 +121,9 @@ const COLS=[
 const SHOW=5;           // rows a column shows before "Show All"
 const STALE_MIN=60;     // older than this, the freshness line turns amber
 let board=null, phase="loading", db=null;
+const HOST="host:agent-board";
+let mcp=null, live=false, liveAt=0, liveNote="", copy=null, refreshing=false, unwatch=null;
+let savedFp="", savedAt=0;          // the copy this view last wrote to board/current
 const expanded={}, openK={}, confirming={};
 let actions=new Map(), actionMsg={};   // localId -> its action row; localId -> a write that failed
 // Paul is on the Mac almost always: Open goes to the Claude app there. A phone can't open the app link, so it gets
@@ -203,7 +213,8 @@ function freshness(){
     tx.textContent=phase==="loading"?"Loading the board…":phase==="empty"?"No board from your Mac yet.":"The board can't be read in this view.";
     return;
   }
-  const at=Date.parse(board.refreshedAt),age=Date.now()-at;
+  const at=live?liveAt:Date.parse(board.refreshedAt),age=Date.now()-at;
+  if(live){el.className="fresh ok";tx.innerHTML=`<b>Live</b> from your Mac. Updated ${esc(age<60000?"just now":ago(age))} (${esc(clock(at))}), and every 30 seconds.`;return}
   if(age<15*60000){el.className="fresh ok";tx.innerHTML=`Updated <b>${esc(ago(age))}</b> (${esc(clock(at))}) from your Mac.`}
   else if(age<STALE_MIN*60000){el.className="fresh";tx.innerHTML=`Updated <b>${esc(ago(age))}</b> (${esc(clock(at))}) from your Mac.`}
   else{el.className="fresh old";tx.innerHTML=`Last update from your Mac was <b>${esc(ago(age))}</b> (${esc(clock(at))}). Sessions may have moved since, unless your Mac is asleep.`}
@@ -211,6 +222,8 @@ function freshness(){
 
 function render(){
   freshness();
+  const rf=$("refresh");rf.hidden=!mcp;rf.disabled=refreshing;rf.textContent=refreshing?"Refreshing…":"Refresh";
+  const ln=$("livenote");ln.hidden=!liveNote;ln.textContent=liveNote;
   const link=$("todohub"),u=String(board?.todoHubUrl||"");
   if(/^https:\/\/claude\.ai\//.test(u)){link.href=u;link.hidden=false}else link.hidden=true;
   const all=board?.sessions||[];
@@ -241,16 +254,66 @@ function render(){
   }).join("");
 }
 
-// Clocks move every 30 seconds without re-rendering, so nothing shifts under a thumb.
+// Clocks move every 15 seconds without re-rendering, so nothing shifts under a thumb.
 function tick(){
   freshness();
   document.querySelectorAll(".ago[data-at]").forEach(el=>{const t=Number(el.dataset.at);if(t)el.textContent="Active "+ago(Date.now()-t)});
 }
-setInterval(tick,30000);
+setInterval(tick,15000);
+
+/* ---------- live board from the Mac ---------- */
+const validBoard=d=>d&&typeof d==="object"&&Array.isArray(d.sessions)&&d.refreshedAt?d:null;
+function showCopy(){board=copy;phase=board?"ok":"empty"}
+function applyLive(result){
+  const d=validBoard(result?.payload);
+  if(!d)return false;
+  board=d;live=true;liveNote="";phase="ok";
+  liveAt=result.cache?.storedAt||Date.parse(d.refreshedAt)||Date.now();
+  saveCopy(d);
+  render();return true;
+}
+// Keep board/current current for views without the connector, writing only when the board itself changed.
+async function saveCopy(d){
+  if(!db||!d.fingerprint||d.fingerprint===savedFp||Date.now()-savedAt<60000)return;
+  savedFp=d.fingerprint;savedAt=Date.now();
+  try{await db.doc("board/current").set(d)}catch(e){savedFp=""}
+}
+// What to say when the live board can't be read, by cause. The last good board stays on screen.
+function liveFailed(e){
+  const c=e?.code;
+  const denied=["server_not_connected","not_in_manifest","blocked_by_policy","not_granted","capability_disabled","capability_removed"].includes(c);
+  if(denied){live=false;showCopy()}
+  liveNote=c==="server_not_connected"?"Live updates only work in the Claude app on your Mac. Showing the last saved copy."
+    :c==="not_in_manifest"?"This page isn't allowed to use the Agent Board connector. Turn it on from the page's Permissions menu, then tap Refresh."
+    :c==="cancelled"||c==="approval_required"?"Live updates need your OK. Tap Refresh and choose Allow."
+    :c==="tool_error"?(e.message||"The Agent Dashboard isn't answering on your Mac.")
+    :e?.retryable?"Couldn't reach your Mac just now. It will try again in 30 seconds."
+    :"Live updates aren't available in this view. Showing the last saved copy.";
+  if(!live)showCopy();
+  render();
+}
+function watchLive(){
+  if(unwatch||!mcp)return;
+  unwatch=mcp.watchTool(HOST,"board",null,ev=>{
+    if(ev.type==="data"){if(!applyLive(ev.result))liveFailed({code:"tool_error",message:"The Agent Board connector sent something this page can't read."})}
+    else liveFailed(ev.error);
+  },{refetchInterval:30000});
+}
+async function refreshNow(){
+  if(!mcp||refreshing)return;
+  refreshing=true;render();
+  try{
+    const r=await mcp.callTool(HOST,"board",null,{cache:{refresh:true}});
+    refreshing=false;
+    if(applyLive(r))watchLive();
+    else liveFailed({code:"tool_error",message:"The Agent Board connector sent something this page can't read."});
+  }catch(e){refreshing=false;liveFailed(e)}
+}
 
 document.addEventListener("toggle",e=>{const d=e.target;if(d.dataset&&d.dataset.k)openK[d.dataset.k]=d.open},true);
 document.addEventListener("click",e=>{
   const btn=e.target.closest("button");if(!btn)return;
+  if(btn.id==="refresh"){refreshNow();return}
   if(btn.id==="routines"){hideRoutines=!hideRoutines;remember("hub.hideRoutines",hideRoutines?"1":"0");render();return}
   if(btn.id==="completed"){showCompleted=!showCompleted;remember("hub.showCompleted",showCompleted?"1":"0");render();return}
   if(btn.dataset.more){expanded[btn.dataset.more]=!expanded[btn.dataset.more];render();return}
@@ -263,13 +326,13 @@ document.addEventListener("click",e=>{
 
 render();
 (async()=>{
+  window.claude?.use?.("mcp").then(m=>{mcp=m;if(mcp){render();refreshNow()}}).catch(()=>{});
   db=await window.claude?.use?.("db");
-  if(!db){phase="nodb";render();return}
+  if(!db){if(!live){phase="nodb";render()}return}
   db.doc("board/current").onSnapshot(snap=>{
-    const d=snap.exists?snap.data():null;
-    board=d&&Array.isArray(d.sessions)&&d.refreshedAt?d:null;
-    phase=board?"ok":"empty";render();
-  },()=>{phase="nodb";render()});
+    copy=validBoard(snap.exists?snap.data():null);
+    if(!live){showCopy();render()}
+  },()=>{if(!live){phase="nodb";render()}});
   db.collection("actions").onSnapshot(qs=>{
     actions=new Map(qs.docs.map(d=>d.data()).filter(x=>x&&x.kind==="archive"&&okLocal(x.sessionId)).map(x=>[x.sessionId,x]));
     render();
