@@ -64,6 +64,7 @@
       border-bottom:1px solid var(--line)}
   .gh .t{font-weight:700;color:var(--navy);font-size:14px}
   .group.needs .gh .t{color:var(--warn)}
+  .group.ready .gh .t{color:var(--done)}
   .group.empty .gh{border-bottom:0}
 
   .pill{display:inline-block;font-size:12px;font-weight:600;padding:1px 8px;border-radius:999px;
@@ -83,6 +84,8 @@
   .row.needs .sd{background:var(--warn)}
   .row.completed .sd{background:var(--faint)}
   .row.stale .sd{background:transparent;border:1.5px solid var(--faint)}
+  .row.ready .sd{background:var(--done)}
+  .row.ready.stale .sd{background:transparent;border-color:var(--done)}
   .name{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
   .row.stale .name{color:var(--muted)}
   .ago{margin-left:auto;flex:none;font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
@@ -265,31 +268,34 @@ function md(src){
 }
 
 const SECTIONS = [
-  { key:'needsInput', label:'Needs input', cls:'needs' },
-  { key:'working',    label:'Working',     cls:'' },
-  { key:'completed',  label:'Completed',   cls:'' },
+  { key:'needsInput', label:'Needs Input',   cls:'needs' },
+  // Turn over and the last reply is a finished status update: read it, then archive.
+  { key:'ready',      label:'Ready for You', cls:'ready' },
+  { key:'working',    label:'Working',       cls:'' },
+  { key:'completed',  label:'Completed',     cls:'' },
 ];
 
 function renderList(){
   const list = state.sessions || [], t = Date.now();
   const working = list.filter(s=>s.group==='working').length;
   const needs   = list.filter(s=>s.group==='needsInput').length;
-  $('count').textContent = list.length ? `${needs} need you · ${working} working · ${list.length} total` : '';
+  const ready   = list.filter(s=>s.group==='ready').length;
+  $('count').textContent = list.length ? `${needs} need you · ${ready} ready · ${working} working · ${list.length} total` : '';
   $('countsep').textContent = list.length ? '. ' : '';
-  document.title = needs ? `(${needs}) Agents — need you` : working ? `${working} working · Agents` : 'Agents';
+  document.title = needs ? `(${needs}) Agents — need you` : ready ? `(${ready}) Agents — ready` : working ? `${working} working · Agents` : 'Agents';
 
   if (!list.length){
     $('list').innerHTML = '<div class="group empty"><div class="gh"><span class="t">No agents running</span></div></div>';
     return;
   }
 
-  // Needs input and Working are plain cards. Completed collapses into a
+  // Needs Input, Ready for You and Working are plain cards. Completed collapses into a
   // closed-by-default toggle — it is reference, not something to scan.
   $('list').innerHTML = SECTIONS.map(sec => {
     const rows = list.filter(s => s.group === sec.key);
     if (!rows.length) return '';
     const body = rows.map(s => `
-        <button class="row ${s.id===selected?'on':''} ${s.blocked?'blocked':''} ${s.group==='needsInput'?'needs':''} ${s.group==='completed'?'completed':''} ${s.live?'':'stale'}"
+        <button class="row ${s.id===selected?'on':''} ${s.blocked?'blocked':''} ${s.group==='needsInput'?'needs':''} ${s.group==='ready'?'ready':''} ${s.group==='completed'?'completed':''} ${s.live?'':'stale'}"
                 data-id="${esc(s.id)}" title="${s.live?'live signal':'no live signal'}">
           <div class="r1">
             <span class="sd"></span>
@@ -302,7 +308,7 @@ function renderList(){
         </button>`).join('');
     if (sec.key === 'completed')
       return `<details class="group donesec" id="donesec" ${doneOpen?'open':''}><summary><span class="t">Completed</span><span class="pill m">${rows.length}</span></summary>${body}</details>`;
-    return `<div class="group ${sec.cls}"><div class="gh"><span class="t">${sec.label}</span><span class="pill ${sec.cls==='needs'?'w':''}">${rows.length}</span></div>${body}</div>`;
+    return `<div class="group ${sec.cls}"><div class="gh"><span class="t">${sec.label}</span><span class="pill ${sec.cls==='needs'?'w':sec.cls==='ready'?'ok':''}">${rows.length}</span></div>${body}</div>`;
   }).join('');
 
   const ds = $('donesec');
@@ -361,10 +367,10 @@ function renderDetail(){
       <div class="acts">${d.activity.map(a=>`<b>${esc(a.tool)}</b>${a.detail?' — '+esc(a.detail):''}`).join('<br>')}</div>
     </details></div>` : '';
 
-  const pillCls = s.group==='needsInput' ? 'w' : s.group==='completed' ? 'm' : '';
+  const pillCls = s.group==='needsInput' ? 'w' : s.group==='ready' ? 'ok' : s.group==='completed' ? 'm' : '';
   el.innerHTML = `
     <div class="d-head"><h2 class="d-title">${esc(nameOf(s))}</h2>
-      <span class="pill ${pillCls}">${esc(s.state)} · ${ago(Date.now()-(s.stateAt||s.lastSeen))}</span></div>
+      <span class="pill ${pillCls}">${esc(s.group==='ready' ? 'Ready for You' : s.state)} · ${ago(Date.now()-(s.stateAt||s.lastSeen))}</span></div>
     <div class="d-sub">${esc(projectOf(s))}${s.branch?' · '+esc(s.branch):''} · ${esc(prettyPath(s.cwd))}</div>
     ${askBlock}${asked}${said}${todos}${acts}`;
 

@@ -16,7 +16,7 @@ import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import os from 'node:os';
-import { sessionIndex, sessionDetail } from './lib-sessions.mjs';
+import { sessionIndex, sessionDetail, replyFinished } from './lib-sessions.mjs';
 import { readTodo } from './lib-todo.mjs';
 
 const HOST = process.env.AGENT_DASH_HOST || '127.0.0.1';
@@ -29,6 +29,8 @@ const sessions = new Map();
 let titleCache = new Map();
 /** connected SSE clients */
 const clients = new Set();
+/** session id -> true when its latest reply is a finished status reply */
+const finished = new Map();
 
 const now = () => Date.now();
 
@@ -93,25 +95,30 @@ function sweep() {
 
 // ------------------------------------------------------------------ state
 // Paul's mental model, not the hook's:
-//   needsInput  — the agent has stopped and the ball is in his court. That is
-//                 BOTH a permission prompt (Waiting) and a finished turn (Idle).
-//                 Treating "Idle" as its own quiet category was the bug: the
-//                 app called these "needs input" while the board called them idle.
-//   working     — actively running.
+//   needsInput  — the agent has ASKED for something: a permission prompt or a
+//                 question ('Waiting').
+//   ready       — the turn has ended AND the last reply is a finished status
+//                 reply (see isFinishedReply in lib-sessions.mjs). The agent has
+//                 posted its final update; Paul's move is to read it.
+//   working     — running, or between turns without a finished reply.
 //   completed   — the session has ended.
-// Only a session that has actually ASKED for something counts as needing Paul.
 //
-// 'Idle' means the turn ended — which is NOT the same as wanting him. An agent
-// that kicked off a CI run and is waiting on it ends its turn and sits Idle for
-// many minutes while GitHub works; calling that "needs input" sent Paul to a
-// window that had nothing to ask. 'Waiting' is the honest signal: it only fires
-// on a permission prompt or a question.
+// 'Idle' alone means the turn ended — which is NOT the same as wanting him. An
+// agent that kicked off a CI run and is waiting on it ends its turn and sits Idle
+// for many minutes while GitHub works; calling that "needs input" sent Paul to a
+// window that had nothing to ask. So Idle splits on what the agent last said: a
+// reply that closes with the Hub line or the archive sentence is Ready for You,
+// anything else stays under Working. False "working" is still cheaper than a
+// false "needs you", and the closing line is the agent saying, in Paul's own
+// format, that it is done.
 //
-// The trade, stated plainly: an agent that genuinely finished and is waiting for
-// Paul now sits under Working until it asks him something. False "working" is
-// cheaper than false "needs you" — the second one wastes a trip.
-function groupOf(state) {
+// A store-only row (no live hook signal) reads 'Ended' after 45 quiet minutes,
+// but it is still an open, unarchived window. If its last reply is a finished
+// one, it is waiting for Paul, so it counts as ready too. Otherwise "Ready for
+// You" would empty itself every time he stepped away for an hour.
+function groupOf(state, done, live) {
   if (state === 'Waiting') return 'needsInput';
+  if (done && (state === 'Idle' || (!live && state === 'Ended'))) return 'ready';
   if (state === 'Ended') return 'completed';
   return 'working';
 }
@@ -155,15 +162,15 @@ function snapshot() {
     return {
       ...s,
       live: true,
-      group: groupOf(s.state),
+      group: groupOf(s.state, finished.get(s.id), true),
       blocked: s.state === 'Waiting',       // permission prompt: the loud kind
       title_session: meta.title || null,     // the chat-window name from the app
       localId: meta.localId || null,
       branch: s.branch || meta.branch || null,
     };
   });
-  for (const st of fromStore()) list.push({ ...st, group: groupOf(st.state), blocked: false });
-  const rank = { needsInput: 0, working: 1, completed: 2 };
+  for (const st of fromStore()) list.push({ ...st, group: groupOf(st.state, finished.get(st.id), false), blocked: false });
+  const rank = { needsInput: 0, ready: 1, working: 2, completed: 3 };
   list.sort(
     (a, b) =>
       (rank[a.group] ?? 9) - (rank[b.group] ?? 9) ||
@@ -214,8 +221,12 @@ async function ingest(ev) {
   if (prev.state !== rec.state) rec.stateAt = now();
   else rec.stateAt = prev.stateAt || now();
 
+  // A new turn makes the last reply old news; until the next one is read, the
+  // session is not ready.
+  if (rec.state !== 'Idle') finished.delete(id);
   sessions.set(id, rec);
   broadcast();
+  if (rec.state === 'Idle') refreshFinished();
 
   // Enrichment is deliberately after the broadcast: the board updates
   // instantly, then fills in project/branch a moment later.
@@ -308,6 +319,35 @@ const server = http.createServer(async (req, res) => {
 
 setInterval(sweep, 5_000).unref?.();
 
+// Which ended turns closed with a finished status reply. Reads transcripts, so it
+// runs beside the board rather than inside snapshot(); replyFinished only re-reads
+// a transcript that has changed since last time.
+let checking = false, again = false;
+async function refreshFinished() {
+  if (checking) { again = true; return; } // an Idle event mid-check: run once more after
+  checking = true;
+  try {
+    const ids = new Set();
+    for (const s of sessions.values()) if (s.state === 'Idle') ids.add(s.id);
+    for (const s of fromStore()) ids.add(s.id);
+    let changed = false;
+    for (const id of ids) {
+      let done = await replyFinished(id).catch(() => false);
+      // A new turn may have started while the transcript was being read.
+      const cur = sessions.get(id);
+      if (cur && cur.state !== 'Idle') done = false;
+      if (!!finished.get(id) !== done) changed = true;
+      if (done) finished.set(id, true); else finished.delete(id);
+    }
+    for (const id of finished.keys()) if (!ids.has(id)) { finished.delete(id); changed = true; }
+    if (changed) broadcast();
+  } finally {
+    checking = false;
+    if (again) { again = false; refreshFinished(); }
+  }
+}
+setInterval(refreshFinished, 5_000).unref?.();
+
 async function refreshTitles() {
   try {
     const idx = await sessionIndex();
@@ -322,7 +362,7 @@ async function refreshTitles() {
     if (changed && sessions.size) broadcast();
   } catch { /* the board still works without titles */ }
 }
-refreshTitles();
+refreshTitles().then(refreshFinished);
 setInterval(refreshTitles, 5_000).unref?.();
 
 server.on('error', (err) => {

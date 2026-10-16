@@ -78,6 +78,72 @@ async function transcriptPath(cliId) {
   return candidates[0]?.p || null;
 }
 
+// --------------------------------------------------------- finished replies
+// Paul's global CLAUDE.md fixes how a final status reply ends. Until 2026-10-16
+// its last line started "**Hub:**" (where the to-dos went, whether the branch
+// can be archived). Since then a thread that can be archived ends with exactly
+// ARCHIVE_LINE, and one that can't ends with neither, because the agent is still
+// on it. Either marker means the agent has posted its final update and the next
+// move is Paul's: read it.
+const ARCHIVE_LINE = 'Everything has been saved. You can archive this thread.';
+
+export function isFinishedReply(text) {
+  if (!text) return false;
+  // The last three lines, because the archive sentence (or the scratch-folder
+  // offer) can follow the Hub line.
+  const end = text.split('\n').map(l => l.trim()).filter(Boolean).slice(-3);
+  if (end.at(-1)?.replace(/^[*_]+|[*_]+$/g, '') === ARCHIVE_LINE) return true;
+  return end.some(l => l.startsWith('**Hub:**'));
+}
+
+/**
+ * The agent's latest reply, or null if anything has been sent to it since: a
+ * new prompt, an answer, or a background-task notice it has yet to answer.
+ */
+function latestReply(text) {
+  const lines = text.split('\n');
+  lines.shift(); // a tail read starts mid-line
+  for (let i = lines.length - 1; i >= 0; i--) {
+    let d;
+    try { d = JSON.parse(lines[i]); } catch { continue; }
+    if (d.isSidechain) continue;
+    const c = d.message?.content;
+    if (d.type === 'user' && !d.isMeta) {
+      const toolResult = Array.isArray(c) && c.some(x => x?.type === 'tool_result');
+      if (!toolResult) return null;
+    }
+    if (d.type === 'assistant' && Array.isArray(c)) {
+      const txt = c.filter(x => x?.type === 'text').map(x => x.text).join('').trim();
+      if (txt) return txt;
+    }
+  }
+  return null;
+}
+
+const pathMemo = new Map();  // cliId -> {p, at}
+const PATH_TTL = 60_000;     // a session can move folders, so re-resolve now and then
+const replyMemo = new Map(); // cliId -> {p, mtimeMs, size, finished}
+
+/**
+ * Has this session's latest reply been a finished status reply? Cheap enough to
+ * call every few seconds: the transcript is re-read only after it changes.
+ */
+export async function replyFinished(cliId) {
+  let m = pathMemo.get(cliId);
+  if (!m || Date.now() - m.at > PATH_TTL) {
+    m = { p: await transcriptPath(cliId), at: Date.now() };
+    pathMemo.set(cliId, m);
+  }
+  if (!m.p) return false;
+  let s;
+  try { s = await stat(m.p); } catch { pathMemo.delete(cliId); return false; }
+  const hit = replyMemo.get(cliId);
+  if (hit && hit.p === m.p && hit.mtimeMs === s.mtimeMs && hit.size === s.size) return hit.finished;
+  const finished = isFinishedReply(latestReply(await tail(m.p)));
+  replyMemo.set(cliId, { p: m.p, mtimeMs: s.mtimeMs, size: s.size, finished });
+  return finished;
+}
+
 /**
  * What is this agent actually doing? Pulls the last thing you asked, the last
  * thing Claude said, and its current to-do list if it keeps one.

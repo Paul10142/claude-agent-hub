@@ -90,9 +90,18 @@ Any Markdown file works. It parses `- [ ]` and `1. [ ]`, groups consecutive item
 
 | Tab | Shows |
 | --- | --- |
-| **Agents** | Live sessions: needs input, working, completed. Click one for what you asked, what it last said, its to-do list and recent actions. |
+| **Agents** | Live sessions: needs input, ready for you, working, completed. Click one for what you asked, what it last said, its to-do list and recent actions. |
 | **Manual** | Things only you can do, numbered, grouped into tasks. |
 | **Decisions** | Questions you can answer in a sentence. |
+
+How the Agents tab groups sessions:
+
+| Section | When |
+| --- | --- |
+| **Needs Input** | The agent asked: a permission prompt or a question. |
+| **Ready for You** | The turn is over and the agent's last reply ends with its final-status line: a line starting `**Hub:**`, or exactly `Everything has been saved. You can archive this thread.` Those are the closing lines this setup's `CLAUDE.md` requires; change `isFinishedReply()` in `lib-sessions.mjs` to match yours. |
+| **Working** | Running, or between turns without that line (say, waiting on CI). |
+| **Completed** | The session ended. Collapsed by default. |
 
 Ticking items builds a copy-pasteable hand-off note — the page can't edit your files, so it writes the message for an agent to do it.
 
