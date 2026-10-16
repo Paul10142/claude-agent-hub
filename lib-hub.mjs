@@ -72,13 +72,7 @@ export function hubFingerprint(rows) {
   return createHash('sha1').update(JSON.stringify(shape)).digest('hex').slice(0, 16);
 }
 
-/**
- * `actions` turns on the page's Archive button. Leave it off until something
- * carries the requests out: the page writes actions/archive-<localId> rows
- * ({kind: "archive", sessionId, title, at, status: "pending"}), and only a
- * Claude session inside the app can archive another session.
- */
-export function hubDoc({ sessions, titles, todoHubUrl, actions = false, at = Date.now() }) {
+export function hubDoc({ sessions, titles, todoHubUrl, at = Date.now() }) {
   const rows = hubRows(sessions, titles, at);
   const counts = {};
   for (const r of rows) counts[r.group] = (counts[r.group] || 0) + 1;
@@ -88,7 +82,6 @@ export function hubDoc({ sessions, titles, todoHubUrl, actions = false, at = Dat
     fingerprint: hubFingerprint(rows),
     counts,
     todoHubUrl: todoHubUrl || null,
-    actions: !!actions,
     sessions: rows,
   };
 }

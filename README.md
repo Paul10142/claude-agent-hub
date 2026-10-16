@@ -129,7 +129,7 @@ Publish the page with `capabilities: {db: {}, mcp: {servers: [{server: "host:age
 
 `GET /api/hub` (without `save`) returns the whole document for debugging. The document holds titles, columns, to-dos and links, never transcripts. Publish the page with `capabilities: {db: {}}`.
 
-Actions from the page (archive, mark seen, reply) are not built. When they are, the page writes rows to an `actions` collection and the session that refreshes the board carries them out, since only an app session can archive or message another session.
+The page has no Archive or reply buttons. Only a Claude session inside the app can archive or message another session, so they would need a session polling for requests, which costs usage on every check.
 
 ## Deliberate limitations
 
