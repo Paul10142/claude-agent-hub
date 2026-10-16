@@ -94,23 +94,26 @@ async function transcriptPath(cliId) {
 }
 
 // ---------------------------------------------------------- turn endings
-// Paul's global CLAUDE.md fixes how a status reply ends: a "**Hub:**" line, and,
-// only when nothing is left running and the thread can be archived, exactly
-// ARCHIVE_LINE as the very last line. (From 2026-10-16 to later that day the Hub
-// line was dropped, so some replies end with the archive sentence alone.)
+// Paul's global CLAUDE.md fixes how a status reply ends: "**HUB:**",
+// "**BRANCH:**" and "**SAVE:**" lines, the SAVE line last. It reads exactly
+// ARCHIVE_LINE when the thread can be archived, "Not yet: ..." otherwise.
+// Older replies end "**Hub:** ... **Branch:** ..." with ARCHIVE_LINE bare on the
+// last line, or with the archive sentence alone, so both shapes are accepted.
 const ARCHIVE_LINE = 'Everything has been saved. You can archive this thread.';
+const HUB_LINE = /^\*\*HUB:\*\*/i;
+const SAVE_LABEL = /^\*\*SAVE:\*\*\s*/i;
 
 /** The agent's own word that it is done: the archive sentence as the last line. */
 export function isArchivable(text) {
   if (!text) return false;
   const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
-  return lines.at(-1)?.replace(/^[*_]+|[*_]+$/g, '') === ARCHIVE_LINE;
+  return lines.at(-1)?.replace(SAVE_LABEL, '').replace(/^[*_]+|[*_]+$/g, '') === ARCHIVE_LINE;
 }
 
-/** A status reply's closing Hub line, in the last three lines. */
+/** A status reply's closing HUB line, in the last five lines. */
 export function hasHubLine(text) {
   if (!text) return false;
-  return text.split('\n').map(l => l.trim()).filter(Boolean).slice(-3).some(l => l.startsWith('**Hub:**'));
+  return text.split('\n').map(l => l.trim()).filter(Boolean).slice(-5).some(l => HUB_LINE.test(l));
 }
 
 /**
@@ -126,7 +129,7 @@ export function replyTodos(text) {
   if (start < 0) return { section: false, items: [] };
   const items = [];
   for (const l of lines.slice(start + 1)) {
-    if (/^\s*#{1,6}\s/.test(l) || l.trim().startsWith('**Hub:**') || l.trim() === ARCHIVE_LINE || l.trim() === '---') break;
+    if (/^\s*#{1,6}\s/.test(l) || HUB_LINE.test(l.trim()) || SAVE_LABEL.test(l.trim()) || l.trim() === ARCHIVE_LINE || l.trim() === '---') break;
     const m = /^ ?[-*]\s+\[ \]\s+(.+)/.exec(l);
     if (!m) continue;
     const item = m[1].replace(/\*\*/g, '').trim();
