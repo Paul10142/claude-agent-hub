@@ -99,15 +99,23 @@ async function transcriptPath(cliId) {
 // ARCHIVE_LINE when the thread can be archived, "Not yet: ..." otherwise.
 // Older replies end "**Hub:** ... **Branch:** ..." with ARCHIVE_LINE bare on the
 // last line, or with the archive sentence alone, so both shapes are accepted.
+// Since 2026-10-18 the sentence ends with a ✅; replies before that don't.
 const ARCHIVE_LINE = 'Everything has been saved. You can archive this thread.';
+const ARCHIVE_TICK = /\s*\u2705\uFE0F?$/u;
 const HUB_LINE = /^\*\*HUB:\*\*/i;
 const SAVE_LABEL = /^\*\*SAVE:\*\*\s*/i;
+
+/** One line that is the archive sentence, with or without its label, bold and ✅. */
+function isArchiveSentence(line) {
+  const s = line.trim().replace(SAVE_LABEL, '').replace(/^[*_]+|[*_]+$/g, '').replace(ARCHIVE_TICK, '');
+  return s.replace(/[*_]+$/, '') === ARCHIVE_LINE;
+}
 
 /** The agent's own word that it is done: the archive sentence as the last line. */
 export function isArchivable(text) {
   if (!text) return false;
-  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
-  return lines.at(-1)?.replace(SAVE_LABEL, '').replace(/^[*_]+|[*_]+$/g, '') === ARCHIVE_LINE;
+  const last = text.split('\n').map(l => l.trim()).filter(Boolean).at(-1);
+  return last !== undefined && isArchiveSentence(last);
 }
 
 /** A status reply's closing HUB line, in the last five lines. */
@@ -129,7 +137,7 @@ export function replyTodos(text) {
   if (start < 0) return { section: false, items: [] };
   const items = [];
   for (const l of lines.slice(start + 1)) {
-    if (/^\s*#{1,6}\s/.test(l) || HUB_LINE.test(l.trim()) || SAVE_LABEL.test(l.trim()) || l.trim() === ARCHIVE_LINE || l.trim() === '---') break;
+    if (/^\s*#{1,6}\s/.test(l) || HUB_LINE.test(l.trim()) || SAVE_LABEL.test(l.trim()) || isArchiveSentence(l) || l.trim() === '---') break;
     const m = /^ ?[-*]\s+\[ \]\s+(.+)/.exec(l);
     if (!m) continue;
     const item = m[1].replace(/\*\*/g, '').trim();

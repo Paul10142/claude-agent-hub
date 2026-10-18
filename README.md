@@ -102,7 +102,7 @@ How the Agents tab groups sessions, in four columns across the top:
 | **Ready for You** | The turn is over, it left you no to-dos, and nothing it started will wake it up again: a report to read, or a stalled agent. |
 | **Working** | Mid-turn. |
 | **Background** | The turn is over, no to-dos, but something it started will wake it: a background command, helper agent or monitor still running, an open PR whose CI the app is watching, a scheduled check-in, or a session it started. The row says which. |
-| **Completed** | Hidden until you click "Show Completed". The agent's last reply ends with `**SAVE:** Everything has been saved. You can archive this thread.`, lists no to-dos, and is over an hour old, so all that's left is archiving it. For that first hour it shows in Ready for You. |
+| **Completed** | Hidden until you click "Show Completed". The agent's last reply ends with `**SAVE:** Everything has been saved. You can archive this thread. ✅` (the ✅ is optional), lists no to-dos, and is over an hour old, so all that's left is archiving it. For that first hour it shows in Ready for You. |
 
 Each column shows five agents and scrolls; "Show All" expands it. Click one and its detail fills the bottom half of the page, with an **Open in Claude** button that brings that session forward in the app. Routines (sessions started by a scheduled task) are hidden until you click "Show Routines".
 
